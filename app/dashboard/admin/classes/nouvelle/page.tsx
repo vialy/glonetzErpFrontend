@@ -1,0 +1,221 @@
+"use client"
+
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useMemo, useState } from "react"
+import { ArrowLeft, CalendarRange, Save, School, Sparkles } from "lucide-react"
+import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { MobileBackButton } from "@/components/mobile-back-button"
+import { addAdminClass, formatFcfa, type AdminClassStatus } from "@/services/admin-mock.service"
+
+export default function NouvelleClassePage() {
+  const router = useRouter()
+  const [name, setName] = useState("")
+  const [session, setSession] = useState("")
+  const [periodStart, setPeriodStart] = useState("")
+  const [periodEnd, setPeriodEnd] = useState("")
+  const [status, setStatus] = useState<AdminClassStatus>("active")
+  const [tuition, setTuition] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
+
+  const errors = useMemo(() => {
+    const list: string[] = []
+    if (!name.trim()) list.push("Nom de classe obligatoire.")
+    if (!session.trim()) list.push("Libelle de session obligatoire.")
+    if (!periodStart) list.push("Date de debut obligatoire.")
+    if (!periodEnd) list.push("Date de fin obligatoire.")
+    if (periodStart && periodEnd && periodStart > periodEnd) list.push("La date de debut doit preceder la fin.")
+    const amount = Number(tuition)
+    if (!tuition.trim() || Number.isNaN(amount) || amount <= 0) list.push("Montant de pension valide obligatoire.")
+    return list
+  }, [name, session, periodStart, periodEnd, tuition])
+
+  function submit() {
+    if (errors.length > 0) {
+      setMessage({ type: "err", text: errors[0] })
+      return
+    }
+    setSubmitting(true)
+    setMessage(null)
+    try {
+      const amount = Number(tuition)
+      const created = addAdminClass({
+        name: name.trim(),
+        session: session.trim(),
+        periodStart,
+        periodEnd,
+        status,
+        tuitionAmount: amount,
+      })
+      setMessage({ type: "ok", text: `Classe "${created.name}" creee avec succes.` })
+      setTimeout(() => router.push(`/dashboard/admin/classes/${created.id}`), 600)
+    } catch {
+      setMessage({ type: "err", text: "Impossible de creer la classe pour le moment." })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="min-h-0 flex-1 px-4 pb-28 pt-4 md:px-6 md:pb-10 lg:px-8">
+      <MobileBackButton fallbackHref="/dashboard/admin/classes" />
+      <AdminPageHeader
+        title="Nouvelle classe"
+        subtitle="Definissez la session, la periode et la pension. La classe sera disponible pour affectation et promotion."
+        gradientClassName="from-indigo-600 via-violet-600 to-fuchsia-600"
+        actions={
+          <Link
+            href="/dashboard/admin/classes"
+            className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-xs font-semibold text-primary-foreground backdrop-blur transition hover:bg-white/20"
+          >
+            <ArrowLeft className="size-3.5" />
+            Liste des classes
+          </Link>
+        }
+      />
+
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+        <div className="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-xl">
+          <div className="border-b border-border/60 bg-gradient-to-r from-slate-900 via-indigo-950 to-violet-900 px-5 py-4 text-white">
+            <div className="flex items-center gap-3">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-white/10 backdrop-blur">
+                <School className="size-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold tracking-tight">Informations de la classe</p>
+                <p className="text-xs text-white/75">Champs obligatoires pour activer la cohorte dans le centre.</p>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-5 p-5 sm:p-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="nc-name">Nom de la classe</Label>
+                <Input
+                  id="nc-name"
+                  className="h-11 rounded-xl"
+                  placeholder="Ex: A3 - Jan 2026"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="nc-session">Session</Label>
+                <Input
+                  id="nc-session"
+                  className="h-11 rounded-xl"
+                  placeholder="Ex: Jan 2026"
+                  value={session}
+                  onChange={(e) => setSession(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4">
+              <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <CalendarRange className="size-3.5 text-indigo-600" />
+                Periode pedagogique
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="nc-start">Debut</Label>
+                  <Input
+                    id="nc-start"
+                    type="date"
+                    className="h-11 rounded-xl"
+                    value={periodStart}
+                    onChange={(e) => setPeriodStart(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="nc-end">Fin</Label>
+                  <Input
+                    id="nc-end"
+                    type="date"
+                    className="h-11 rounded-xl"
+                    value={periodEnd}
+                    onChange={(e) => setPeriodEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="nc-tuition">Pension annuelle (FCFA)</Label>
+                <Input
+                  id="nc-tuition"
+                  type="number"
+                  min={1}
+                  className="h-11 rounded-xl"
+                  placeholder="162000"
+                  value={tuition}
+                  onChange={(e) => setTuition(e.target.value)}
+                />
+                {tuition && !Number.isNaN(Number(tuition)) ? (
+                  <p className="text-xs text-muted-foreground">Apercu : {formatFcfa(Number(tuition))}</p>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="nc-status">Statut</Label>
+                <select
+                  id="nc-status"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as AdminClassStatus)}
+                  className="flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                >
+                  <option value="active">Active</option>
+                  <option value="finished">Terminee</option>
+                  <option value="archived">Archivee</option>
+                </select>
+              </div>
+            </div>
+
+            {message ? (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm ${
+                  message.type === "ok"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                    : "border-destructive/30 bg-destructive/10 text-destructive"
+                }`}
+              >
+                {message.text}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Button
+                type="button"
+                className="rounded-xl px-6"
+                onClick={submit}
+                disabled={submitting}
+              >
+                <Save className="mr-2 size-4" />
+                {submitting ? "Creation..." : "Creer la classe"}
+              </Button>
+              <Button type="button" variant="outline" className="rounded-xl" asChild>
+                <Link href="/dashboard/admin/classes">Annuler</Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="rounded-3xl border border-violet-500/20 bg-gradient-to-b from-violet-500/10 to-background p-5 shadow-lg">
+            <div className="flex items-center gap-2 text-violet-700 dark:text-violet-300">
+              <Sparkles className="size-5" />
+              <p className="text-sm font-semibold">Conseils</p>
+            </div>
+            <ul className="mt-3 list-inside list-disc space-y-2 text-xs leading-relaxed text-muted-foreground">
+              <li>Utilisez un nom lisible (niveau + session).</li>
+              <li>La pension sert de reference pour les nouveaux apprenants.</li>
+              <li>Apres creation : fiche classe, promotion, edition.</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </div>
+  )
+}

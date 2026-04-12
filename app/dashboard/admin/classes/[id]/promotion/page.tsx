@@ -1,0 +1,335 @@
+"use client"
+
+import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { useParams } from "next/navigation"
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Circle,
+  Filter,
+  GraduationCap,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Users,
+} from "lucide-react"
+import { useAdminClasses } from "@/hooks/use-admin-classes"
+import { useAdminLearners } from "@/hooks/use-admin-learners"
+import { formatFcfa, getClassById } from "@/services/admin-mock.service"
+import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { MobileBackButton } from "@/components/mobile-back-button"
+import { toast } from "@/components/ui/use-toast"
+import { cn } from "@/lib/utils"
+
+export default function ClassPromotionPage() {
+  const params = useParams<{ id: string }>()
+  const classId = params?.id ?? ""
+  const adminClassesList = useAdminClasses()
+  const source = adminClassesList.find((c) => c.id === classId) ?? getClassById(classId)
+  const adminLearnersList = useAdminLearners()
+  const candidates = useMemo(
+    () => adminLearnersList.filter((item) => item.classId === classId),
+    [adminLearnersList, classId],
+  )
+
+  const [destinationId, setDestinationId] = useState("")
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  useEffect(() => {
+    const firstOther = adminClassesList.find((c) => c.id !== classId)?.id ?? ""
+    setDestinationId((prev) => prev || firstOther)
+  }, [adminClassesList, classId])
+  useEffect(() => {
+    setSelectedIds(candidates.map((c) => c.id))
+  }, [candidates])
+
+  const [blockUnpaid, setBlockUnpaid] = useState(true)
+  const [excludeReasons, setExcludeReasons] = useState<Record<string, string>>({})
+  const [search, setSearch] = useState("")
+  const [paymentFilter, setPaymentFilter] = useState<"all" | "paid" | "unpaid">("all")
+  const [submitted, setSubmitted] = useState(false)
+
+  if (!source) {
+    return (
+      <div className="px-4 py-10 md:px-6">
+        <MobileBackButton fallbackHref="/dashboard/admin/classes" />
+        <p className="mt-4 text-muted-foreground">Classe introuvable.</p>
+      </div>
+    )
+  }
+
+  const destination = adminClassesList.find((c) => c.id === destinationId)
+  const otherClasses = adminClassesList.filter((c) => c.id !== source.id)
+
+  const filteredCandidates = candidates.filter((row) => {
+    const query = search.trim().toLowerCase()
+    const matchesSearch =
+      !query || row.fullName.toLowerCase().includes(query) || row.phone.toLowerCase().includes(query)
+    const isPaid = row.paid >= row.due
+    const matchesPayment = paymentFilter === "all" || (paymentFilter === "paid" ? isPaid : !isPaid)
+    return matchesSearch && matchesPayment
+  })
+
+  const unpaidIds = candidates.filter((c) => c.paid < c.due).map((c) => c.id)
+  const blockedIds = blockUnpaid ? unpaidIds : []
+  const promotableCount = selectedIds.filter((id) => !blockedIds.includes(id)).length
+
+  return (
+    <div className="min-h-0 flex-1 px-4 pb-28 pt-4 md:px-6 md:pb-10 lg:px-8">
+      <MobileBackButton fallbackHref={`/dashboard/admin/classes/${source.id}`} />
+      <AdminPageHeader
+        title="Promotion de classe"
+        subtitle={`Transfert des apprenants de « ${source.name} » vers une classe de destination, avec selection granulaire.`}
+        gradientClassName="from-indigo-700 via-violet-700 to-fuchsia-700"
+        actions={
+          <Link
+            href={`/dashboard/admin/classes/${source.id}`}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold text-primary-foreground backdrop-blur hover:bg-white/20"
+          >
+            <ArrowLeft className="size-3.5" />
+            Fiche classe
+          </Link>
+        }
+      />
+
+      <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div className="space-y-5 lg:col-span-2">
+          <div className="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-xl">
+            <div className="flex items-center gap-3 border-b border-border/60 bg-gradient-to-r from-slate-900 via-indigo-950 to-violet-900 px-5 py-4 text-white">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-white/10">
+                <SlidersHorizontal className="size-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Etape 1 — Classes source et destination</p>
+                <p className="text-xs text-white/75">Choisissez la cohorte cible pour la promotion.</p>
+              </div>
+            </div>
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{source.name}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{candidates.length} apprenant(s) rattache(s)</p>
+              </div>
+              <div className="rounded-2xl border border-border p-4">
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Classe de destination
+                </label>
+                <select
+                  value={destinationId}
+                  onChange={(e) => setDestinationId(e.target.value)}
+                  className="mt-2 flex h-11 w-full rounded-xl border border-input bg-background px-3 text-sm shadow-sm"
+                >
+                  {otherClasses.length === 0 ? (
+                    <option value="">Aucune autre classe disponible</option>
+                  ) : (
+                    otherClasses.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-xl">
+            <div className="flex flex-col gap-2 border-b border-border/60 bg-muted/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-700">
+                  <Users className="size-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Etape 2 — Selection des apprenants</p>
+                  <p className="text-xs text-muted-foreground">Filtres, recherche et cases pour inclure ou exclure.</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="secondary" className="rounded-xl" onClick={() => setSelectedIds(candidates.map((c) => c.id))}>
+                  Tout selectionner
+                </Button>
+                <Button type="button" size="sm" variant="outline" className="rounded-xl" onClick={() => setSelectedIds([])}>
+                  Tout retirer
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                <div className="relative sm:col-span-2">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-11 rounded-xl pl-9"
+                    placeholder="Rechercher par nom ou telephone..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <div className="relative">
+                  <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <select
+                    value={paymentFilter}
+                    onChange={(e) => setPaymentFilter(e.target.value as "all" | "paid" | "unpaid")}
+                    className="flex h-11 w-full appearance-none rounded-xl border border-input bg-background py-2 pr-8 pl-9 text-sm"
+                  >
+                    <option value="all">Tous les soldes</option>
+                    <option value="paid">Scolarite soldee</option>
+                    <option value="unpaid">Avec impayes</option>
+                  </select>
+                </div>
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={blockUnpaid}
+                  onChange={(e) => setBlockUnpaid(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium text-foreground">Bloquer les impayes</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Les apprenants avec solde non regle ne pourront pas etre promus (meme s&apos;ils sont coches).
+                  </span>
+                </span>
+              </label>
+
+              <div className="space-y-3">
+                {filteredCandidates.map((row) => {
+                  const checked = selectedIds.includes(row.id)
+                  const hasDebt = row.paid < row.due
+                  const isBlocked = blockUnpaid && hasDebt
+                  return (
+                    <div
+                      key={row.id}
+                      className={cn(
+                        "rounded-2xl border p-4 transition-colors",
+                        checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:bg-muted/30",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedIds((prev) => (checked ? prev.filter((id) => id !== row.id) : [...prev, row.id]))
+                        }
+                        className="flex w-full items-start justify-between gap-3 text-left"
+                      >
+                        <div>
+                          <p className="font-semibold text-foreground">{row.fullName}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {row.phone}
+                            {hasDebt ? (
+                              <span className="ml-2 text-amber-800 dark:text-amber-200">
+                                · Impaye {formatFcfa(row.due - row.paid)}
+                              </span>
+                            ) : (
+                              <span className="ml-2 text-emerald-700">· A jour</span>
+                            )}
+                          </p>
+                        </div>
+                        {checked ? (
+                          <CheckCircle2 className="size-5 shrink-0 text-emerald-600" />
+                        ) : (
+                          <Circle className="size-5 shrink-0 text-muted-foreground" />
+                        )}
+                      </button>
+                      {!checked ? (
+                        <Input
+                          value={excludeReasons[row.id] ?? ""}
+                          onChange={(e) => setExcludeReasons((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                          placeholder="Motif d'exclusion (optionnel)"
+                          className="mt-3 h-9 rounded-lg text-xs"
+                        />
+                      ) : null}
+                      {isBlocked && checked ? (
+                        <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+                          Promotion bloquee : impayes detectes avec la regle active.
+                        </p>
+                      ) : null}
+                    </div>
+                  )
+                })}
+                {filteredCandidates.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                    Aucun apprenant ne correspond aux filtres.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-card p-6 shadow-lg">
+            <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-200">
+              <GraduationCap className="size-5" />
+              <p className="text-sm font-semibold">Etape 3 — Validation</p>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              <span className="font-semibold text-foreground">{promotableCount}</span> apprenant(s) seront promus de{" "}
+              <span className="font-medium text-foreground">{source.name}</span> vers{" "}
+              <span className="font-medium text-foreground">{destination?.name ?? "—"}</span>.
+            </p>
+            {blockUnpaid && blockedIds.length > 0 ? (
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                {blockedIds.length} profil(s) avec impayes seront exclus automatiquement.
+              </p>
+            ) : null}
+            <Button
+              type="button"
+              className="mt-5 rounded-xl px-8"
+              disabled={promotableCount === 0 || !destination}
+              onClick={() => {
+                if (promotableCount > 0 && destination) {
+                  setSubmitted(true)
+                  toast({
+                    title: "Promotion validee",
+                    description: `${promotableCount} apprenants promus vers ${destination.name} (simulation).`,
+                  })
+                }
+              }}
+            >
+              <Sparkles className="mr-2 size-4" />
+              Valider la promotion
+            </Button>
+            {promotableCount === 0 ? (
+              <p className="mt-3 text-xs text-destructive">Selectionnez au moins un apprenant eligible.</p>
+            ) : null}
+            {!destination ? <p className="mt-2 text-xs text-destructive">Choisissez une classe de destination.</p> : null}
+            {submitted ? (
+              <div className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                Promotion confirmee (simulation) : {promotableCount} apprenant(s) vers {destination?.name}.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="sticky top-4 rounded-3xl border border-violet-500/20 bg-gradient-to-b from-violet-500/10 to-background p-5 shadow-md">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resume</p>
+            <ul className="mt-4 space-y-3 text-sm">
+              <li className="flex justify-between">
+                <span className="text-muted-foreground">Candidats</span>
+                <span className="font-semibold">{candidates.length}</span>
+              </li>
+              <li className="flex justify-between">
+                <span className="text-muted-foreground">Selectionnes</span>
+                <span className="font-semibold">{selectedIds.length}</span>
+              </li>
+              <li className="flex justify-between">
+                <span className="text-muted-foreground">Promouvables</span>
+                <span className="font-semibold text-emerald-700">{promotableCount}</span>
+              </li>
+            </ul>
+            <Link
+              href="/dashboard/admin/apprenants"
+              className="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-border py-2.5 text-xs font-medium hover:bg-muted/50"
+            >
+              Liste des apprenants
+            </Link>
+          </div>
+        </aside>
+      </div>
+    </div>
+  )
+}
