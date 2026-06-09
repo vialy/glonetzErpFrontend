@@ -113,11 +113,17 @@ export function isIsoDateInPeriod(iso: string, range: { start: Date; end: Date }
   return t >= range.start.getTime() && t <= range.end.getTime()
 }
 
-function formatLocalYmd(d: Date): string {
+export function formatLocalYmd(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, "0")
   const day = String(d.getDate()).padStart(2, "0")
   return `${y}-${m}-${day}`
+}
+
+/** Bornes inclusives au format yyyy-mm-dd pour filtres liste / CSV. */
+export function periodRangeToYmd(range: { start: Date; end: Date } | null): { from: string; to: string } {
+  if (!range) return { from: "", to: "" }
+  return { from: formatLocalYmd(range.start), to: formatLocalYmd(range.end) }
 }
 
 /** Convertit le filtre manager (préréglages + personnalisé) en plage `from`/`to` pour l’audit / rapports admin. */

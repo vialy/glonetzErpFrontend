@@ -15,6 +15,10 @@ export const paymentsService = {
     return provider.getPayments()
   },
   createPayment(input: CreatePaymentInput): Promise<StudentPaymentRecord> {
+    const neeroEnabled = Boolean(process.env.NEXT_PUBLIC_NEERO_BACKEND_URL)
+    if (neeroEnabled && (input.paymentMethod === "orange_money" || input.paymentMethod === "mtn_momo")) {
+      return httpPaymentsProvider.createPayment(input)
+    }
     return provider.createPayment(input)
   },
   applyClaimPayment(input: ApplyClaimPaymentInput): Promise<StudentPaymentRecord> {

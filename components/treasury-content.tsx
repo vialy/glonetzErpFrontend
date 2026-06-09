@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { AlertTriangle, ArrowRight, Building2, CalendarDays, CreditCard, GraduationCap, TrendingUp, Users, Wallet } from "lucide-react"
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { LazyAreaChart } from "@/components/charts/lazy-area-chart"
 import { adminExpenses, formatFcfa } from "@/services/admin-mock.service"
 import { useAdminClasses } from "@/hooks/use-admin-classes"
 import { useAdminPayments } from "@/hooks/use-admin-payments"
@@ -201,25 +201,12 @@ export function TreasuryContent() {
               </div>
             </div>
             <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData}>
-                  <defs>
-                    <linearGradient id="admin-in" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.03} />
-                    </linearGradient>
-                    <linearGradient id="admin-out" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.03} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(value: number) => formatFcfa(value)} />
-                  <Area type="monotone" dataKey="in" stroke="#10b981" strokeWidth={2} fill="url(#admin-in)" />
-                  <Area type="monotone" dataKey="out" stroke="#f59e0b" strokeWidth={2} fill="url(#admin-out)" />
-                </AreaChart>
-              </ResponsiveContainer>
+              <LazyAreaChart
+                data={trendData}
+                formatValue={formatFcfa}
+                inLabel={t("adm_treasury_kpi_in")}
+                outLabel={t("adm_treasury_kpi_charges")}
+              />
             </div>
           </div>
 

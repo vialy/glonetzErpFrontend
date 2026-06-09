@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { useLocale } from "@/hooks/use-locale"
-import { CheckCircle2, XCircle, Paperclip } from "lucide-react"
+import { CheckCircle2, XCircle } from "lucide-react"
+import { ClaimProofActions } from "@/components/claims/claim-proof-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -269,15 +270,15 @@ export default function ReclamationsValidationPage() {
                 <p className="mt-2 text-sm text-muted-foreground">{claim.description}</p>
 
                 {claim.screenshotDataUrl ? (
-                  <a
-                    href={claim.screenshotDataUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2"
-                  >
-                    <Paperclip className="size-3" />
-                    Voir la preuve {claim.screenshotName ? `(${claim.screenshotName})` : ""}
-                  </a>
+                  <ClaimProofActions
+                    className="mt-2"
+                    claimId={claim.id}
+                    screenshotDataUrl={claim.screenshotDataUrl}
+                    screenshotName={claim.screenshotName}
+                    viewLabel={t("recl_view_cap")}
+                    downloadLabel={t("recl_download_cap")}
+                    previewTitle={t("recl_proof_preview_title")}
+                  />
                 ) : null}
 
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">

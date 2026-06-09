@@ -1,5 +1,7 @@
 "use client"
 
+import { DEMO_CLAIM_PROOF_DATA_URL } from "@/lib/claim-proof"
+
 export type ClaimPaymentMethod = "orange_money" | "mtn_momo"
 export type ClaimStatus = "en_attente" | "en_cours" | "resolue" | "rejetee"
 
@@ -17,6 +19,19 @@ export interface ClaimRecord {
 }
 
 const STORAGE_KEY = "glonetz_claims_v1"
+
+const DEMO_CLAIM: ClaimRecord = {
+  id: "CLM-DEMO-001",
+  createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+  amount: 45_000,
+  paymentMethod: "mtn_momo",
+  phoneNumber: "+237677100099",
+  transactionReference: "MTN-DEMO-REF-001",
+  description: "Exemple : paiement debite non visible — preuve jointe pour test admin.",
+  screenshotName: "preuve-demo.png",
+  screenshotDataUrl: DEMO_CLAIM_PROOF_DATA_URL,
+  status: "en_attente",
+}
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof localStorage !== "undefined"
@@ -42,7 +57,10 @@ function saveClaims(claims: ClaimRecord[]) {
 
 export const ClaimsService = {
   getAll(): ClaimRecord[] {
-    return readClaims().sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))
+    const list = readClaims()
+    const sorted = list.sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))
+    if (sorted.length > 0) return sorted
+    return [DEMO_CLAIM]
   },
 
   async create(input: {

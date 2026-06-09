@@ -31,6 +31,7 @@ export interface StudentTuitionSummary {
 export interface CreatePaymentInput {
   amount: number
   paymentMethod: PaymentMethod
+  phoneNumber?: string
   note?: string
 
   // Contexte backend

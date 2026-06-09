@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Eye, Paperclip } from "lucide-react"
+import { Eye } from "lucide-react"
+import { ClaimProofActions } from "@/components/claims/claim-proof-actions"
 import { claimsService, type ClaimRecord } from "@/domains/claims"
 import { useLocale } from "@/hooks/use-locale"
 import { MobileBackButton } from "@/components/mobile-back-button"
@@ -84,15 +85,15 @@ export default function ComptableReclamationsPage() {
               </dl>
               <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{claim.description}</p>
               {claim.screenshotDataUrl ? (
-                <a
-                  href={claim.screenshotDataUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary underline underline-offset-4"
-                >
-                  <Paperclip className="size-3.5" />
-                  {claim.screenshotName ?? t("acc_claim_proof")}
-                </a>
+                <ClaimProofActions
+                  className="mt-3"
+                  claimId={claim.id}
+                  screenshotDataUrl={claim.screenshotDataUrl}
+                  screenshotName={claim.screenshotName}
+                  viewLabel={t("recl_view_cap")}
+                  downloadLabel={t("acc_claim_download")}
+                  previewTitle={t("recl_proof_preview_title")}
+                />
               ) : null}
             </li>
           ))}

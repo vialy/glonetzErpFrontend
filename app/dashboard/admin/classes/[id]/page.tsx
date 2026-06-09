@@ -84,6 +84,15 @@ export default function AdminClassFichePage() {
         </div>
       </div>
 
+      {cls.description.trim() ? (
+        <div className="mt-6 rounded-2xl border border-border/80 bg-card p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("adm_class_fiche_description")}
+          </p>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{cls.description}</p>
+        </div>
+      ) : null}
+
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-lg lg:col-span-2">
           <div className="border-b border-border/60 bg-muted/30 px-4 py-3">

@@ -1,10 +1,14 @@
 import type { ManagerRecordedPaymentMethod } from "@/domains/manager-learners/types"
+import { canonicalAdminUserPhone, parseAdminUserPhone } from "@/lib/admin-user-phone"
+import { deriveClassSession } from "@/lib/class-session"
 
 export type AdminClassStatus = "active" | "finished" | "archived"
 
 export interface AdminClass {
   id: string
   name: string
+  /** Presentation libre : objectifs, filiere, remarques admin. */
+  description: string
   session: string
   periodStart: string
   periodEnd: string
@@ -92,6 +96,7 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
   {
     id: "a1-jan-2025",
     name: "A1 - Jan 2025",
+    description: "Niveau debutant — cohorte janvier 2025, formation generale.",
     session: "Jan 2025",
     periodStart: "2025-01-01",
     periodEnd: "2025-06-30",
@@ -105,6 +110,7 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
   {
     id: "a2-apr-2025",
     name: "A2 - Apr 2025",
+    description: "Niveau intermediaire — rentree avril 2025.",
     session: "Avr 2025",
     periodStart: "2025-04-01",
     periodEnd: "2025-09-30",
@@ -118,6 +124,7 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
   {
     id: "b1-sep-2024",
     name: "B1 - Sep 2024",
+    description: "Cohorte terminee — session septembre 2024.",
     session: "Sep 2024",
     periodStart: "2024-09-01",
     periodEnd: "2025-03-31",
@@ -159,6 +166,7 @@ export function getAdminClasses(): AdminClass[] {
   if (stored) {
     return stored.map((c) => ({
       ...c,
+      description: typeof c.description === "string" ? c.description : "",
       chartData: Array.isArray(c.chartData) && c.chartData.length > 0 ? c.chartData : chart(Math.max(10_000, Math.round(c.tuitionAmount * 0.2))),
     }))
   }
@@ -167,22 +175,28 @@ export function getAdminClasses(): AdminClass[] {
 
 export function addAdminClass(input: {
   name: string
-  session: string
+  session?: string
   periodStart: string
   periodEnd: string
-  status: AdminClassStatus
+  status?: AdminClassStatus
   tuitionAmount: number
+  description?: string
+  locale?: "fr" | "en"
 }): AdminClass {
   const id = `cls-${Date.now()}`
   const tuitionAmount = Math.round(input.tuitionAmount)
   const baseChart = Math.max(15_000, Math.round(tuitionAmount * 0.25))
+  const session =
+    input.session?.trim() ||
+    deriveClassSession(input.periodStart, input.periodEnd, input.locale ?? "fr")
   const newClass: AdminClass = {
     id,
     name: input.name.trim(),
-    session: input.session.trim(),
+    description: (input.description ?? "").trim(),
+    session,
     periodStart: input.periodStart,
     periodEnd: input.periodEnd,
-    status: input.status,
+    status: input.status ?? "active",
     learnersCount: 0,
     tuitionAmount,
     totalDue: 0,
@@ -192,6 +206,50 @@ export function addAdminClass(input: {
   const list = getAdminClasses()
   writeAdminClasses([newClass, ...list])
   return newClass
+}
+
+export function updateAdminClass(
+  classId: string,
+  patch: {
+    name?: string
+    description?: string
+    session?: string
+    periodStart?: string
+    periodEnd?: string
+    status?: AdminClassStatus
+    tuitionAmount?: number
+    locale?: "fr" | "en"
+  },
+): AdminClass | undefined {
+  const list = getAdminClasses()
+  const index = list.findIndex((c) => c.id === classId)
+  if (index < 0) return undefined
+
+  const current = list[index]
+  const periodStart = patch.periodStart ?? current.periodStart
+  const periodEnd = patch.periodEnd ?? current.periodEnd
+  const session =
+    patch.session?.trim() ||
+    (patch.periodStart || patch.periodEnd
+      ? deriveClassSession(periodStart, periodEnd, patch.locale ?? "fr")
+      : current.session)
+
+  const updated: AdminClass = {
+    ...current,
+    name: patch.name !== undefined ? patch.name.trim() : current.name,
+    description: patch.description !== undefined ? patch.description.trim() : current.description,
+    session,
+    periodStart,
+    periodEnd,
+    status: patch.status ?? current.status,
+    tuitionAmount:
+      patch.tuitionAmount !== undefined ? Math.round(patch.tuitionAmount) : current.tuitionAmount,
+  }
+
+  const next = [...list]
+  next[index] = updated
+  writeAdminClasses(next)
+  return updated
 }
 
 /** @deprecated Utiliser getAdminClasses() */
@@ -573,12 +631,134 @@ export const adminExpenses: AdminExpenseItem[] = [
   { id: "e4", type: "extra", label: "Remplacement projecteur", amount: 95_000, createdAt: "2026-03-20" },
 ]
 
-export const adminUsers: AdminUserItem[] = [
+const DEFAULT_ADMIN_USERS: AdminUserItem[] = [
   { id: "u1", fullName: "Super Admin", role: "admin", phone: "677200001", status: "active" },
   { id: "u2", fullName: "Manager Centre", role: "manager", phone: "677200002", status: "active" },
   { id: "u3", fullName: "Comptable Externe", role: "accountant", phone: "677200003", status: "active" },
   { id: "u4", fullName: "Nina Talla", role: "student", phone: "677100001", status: "active" },
 ]
+
+/** @deprecated Utiliser getAdminUsers() pour les donnees a jour (localStorage). */
+export const adminUsers: AdminUserItem[] = DEFAULT_ADMIN_USERS
+
+const ADMIN_USERS_STORAGE_KEY = "glonetz_admin_users_v1"
+
+function canUseUsersStorage() {
+  return typeof window !== "undefined" && typeof localStorage !== "undefined"
+}
+
+function readAdminUsersFromStorage(): AdminUserItem[] | null {
+  if (!canUseUsersStorage()) return null
+  const raw = localStorage.getItem(ADMIN_USERS_STORAGE_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as AdminUserItem[]
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeAdminUsers(next: AdminUserItem[]) {
+  if (!canUseUsersStorage()) return
+  localStorage.setItem(ADMIN_USERS_STORAGE_KEY, JSON.stringify(next))
+  window.dispatchEvent(new Event("admin-users-updated"))
+}
+
+export function getAdminUsers(): AdminUserItem[] {
+  const stored = readAdminUsersFromStorage()
+  if (stored) return stored.map((u) => ({ ...u }))
+  return DEFAULT_ADMIN_USERS.map((u) => ({ ...u }))
+}
+
+export function getAdminUserById(userId: string): AdminUserItem | undefined {
+  return getAdminUsers().find((u) => u.id === userId)
+}
+
+function resolveAdminUserPhone(phone: string): string {
+  const parsed = parseAdminUserPhone(phone)
+  if (!parsed.ok) {
+    if (parsed.error === "empty") throw new Error("PHONE_REQUIRED")
+    throw new Error("PHONE_INVALID_FORMAT")
+  }
+  return parsed.e164
+}
+
+function phoneAlreadyUsed(phoneE164: string, exceptUserId?: string): boolean {
+  const key = canonicalAdminUserPhone(phoneE164)
+  return getAdminUsers().some(
+    (u) => u.id !== exceptUserId && canonicalAdminUserPhone(u.phone) === key,
+  )
+}
+
+export function createAdminUser(input: {
+  fullName: string
+  phone: string
+  role: AdminUserItem["role"]
+}): AdminUserItem {
+  const fullName = input.fullName.trim()
+  if (!fullName) throw new Error("NAME_REQUIRED")
+  const phone = resolveAdminUserPhone(input.phone)
+
+  const list = getAdminUsers()
+  if (phoneAlreadyUsed(phone)) {
+    throw new Error("PHONE_ALREADY_USED")
+  }
+
+  const user: AdminUserItem = {
+    id: `u-${Date.now()}`,
+    fullName,
+    phone,
+    role: input.role,
+    status: "active",
+  }
+  writeAdminUsers([user, ...list])
+  return user
+}
+
+export function updateAdminUser(
+  userId: string,
+  patch: Partial<Pick<AdminUserItem, "fullName" | "phone" | "role" | "status">>,
+): AdminUserItem {
+  const list = getAdminUsers()
+  const idx = list.findIndex((u) => u.id === userId)
+  if (idx === -1) throw new Error("USER_NOT_FOUND")
+
+  const prev = list[idx]
+  const phone = patch.phone !== undefined ? resolveAdminUserPhone(patch.phone) : prev.phone
+
+  if (patch.phone !== undefined && canonicalAdminUserPhone(phone) !== canonicalAdminUserPhone(prev.phone)) {
+    if (phoneAlreadyUsed(phone, userId)) {
+      throw new Error("PHONE_ALREADY_USED")
+    }
+  }
+
+  const fullName = patch.fullName !== undefined ? patch.fullName.trim() : prev.fullName
+  if (!fullName) throw new Error("NAME_REQUIRED")
+
+  const next: AdminUserItem = {
+    ...prev,
+    ...patch,
+    fullName,
+    phone,
+  }
+  const nextList = [...list]
+  nextList[idx] = next
+  writeAdminUsers(nextList)
+  return next
+}
+
+export function setAdminUserStatus(userId: string, status: AdminUserItem["status"]): AdminUserItem {
+  return updateAdminUser(userId, { status })
+}
+
+/** Reinitialise le PIN (simulation admin). */
+export function resetAdminUserPin(userId: string): { pin: string; phone: string; fullName: string } {
+  const user = getAdminUserById(userId)
+  if (!user) throw new Error("USER_NOT_FOUND")
+  const pin = String(Math.floor(100000 + Math.random() * 900000))
+  return { pin, phone: user.phone, fullName: user.fullName }
+}
 
 export const adminAudits: AdminAuditItem[] = [
   { id: "a1", actor: "Super Admin", action: "Validation reclamation", target: "Reclamation #REC-392", createdAt: "2026-03-26 12:15" },

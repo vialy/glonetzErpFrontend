@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { AlertCircle, Paperclip, Send, ShieldAlert } from "lucide-react"
+import { ClaimProofActions } from "@/components/claims/claim-proof-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -277,15 +278,15 @@ export default function ReclamationsPage() {
                 </p>
                 <p className="mt-2 text-sm text-muted-foreground">{claim.description}</p>
                 {claim.screenshotDataUrl ? (
-                  <a
-                    href={claim.screenshotDataUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2"
-                  >
-                    <Paperclip className="size-3" />
-                    {t("recl_view_cap")} {claim.screenshotName ? `(${claim.screenshotName})` : ""}
-                  </a>
+                  <ClaimProofActions
+                    className="mt-2"
+                    claimId={claim.id}
+                    screenshotDataUrl={claim.screenshotDataUrl}
+                    screenshotName={claim.screenshotName}
+                    viewLabel={t("recl_view_cap")}
+                    downloadLabel={t("recl_download_cap")}
+                    previewTitle={t("recl_proof_preview_title")}
+                  />
                 ) : null}
               </div>
             ))

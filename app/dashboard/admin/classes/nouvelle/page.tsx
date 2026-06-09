@@ -8,9 +8,11 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { MobileBackButton } from "@/components/mobile-back-button"
-import { addAdminClass, type AdminClassStatus } from "@/services/admin-mock.service"
+import { addAdminClass } from "@/services/admin-mock.service"
 import { useLocale } from "@/hooks/use-locale"
+import { deriveClassSession } from "@/lib/class-session"
 
 export default function NouvelleClassePage() {
   const { t, locale } = useLocale()
@@ -18,25 +20,29 @@ export default function NouvelleClassePage() {
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
   const [name, setName] = useState("")
-  const [session, setSession] = useState("")
+  const [description, setDescription] = useState("")
   const [periodStart, setPeriodStart] = useState("")
   const [periodEnd, setPeriodEnd] = useState("")
-  const [status, setStatus] = useState<AdminClassStatus>("active")
   const [tuition, setTuition] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
 
+  const derivedSession = useMemo(
+    () => deriveClassSession(periodStart, periodEnd, locale === "en" ? "en" : "fr"),
+    [periodStart, periodEnd, locale],
+  )
+
   const errors = useMemo(() => {
     const list: string[] = []
     if (!name.trim()) list.push(t("adm_class_new_err_name"))
-    if (!session.trim()) list.push(t("adm_class_new_err_session"))
     if (!periodStart) list.push(t("adm_class_new_err_start"))
     if (!periodEnd) list.push(t("adm_class_new_err_end"))
     if (periodStart && periodEnd && periodStart > periodEnd) list.push(t("adm_class_new_err_order"))
     const amount = Number(tuition)
     if (!tuition.trim() || Number.isNaN(amount) || amount <= 0) list.push(t("adm_class_new_err_tuition"))
+    if (description.length > 1000) list.push(t("adm_class_new_err_description_len"))
     return list
-  }, [name, session, periodStart, periodEnd, tuition, t])
+  }, [name, description, periodStart, periodEnd, tuition, t])
 
   function submit() {
     if (errors.length > 0) {
@@ -49,11 +55,12 @@ export default function NouvelleClassePage() {
       const amount = Number(tuition)
       const created = addAdminClass({
         name: name.trim(),
-        session: session.trim(),
+        description: description.trim(),
         periodStart,
         periodEnd,
-        status,
+        status: "active",
         tuitionAmount: amount,
+        locale: locale === "en" ? "en" : "fr",
       })
       setMessage({ type: "ok", text: t("adm_class_new_ok").replace("{name}", created.name) })
       setTimeout(() => router.push(`/dashboard/admin/classes/${created.id}`), 600)
@@ -96,27 +103,29 @@ export default function NouvelleClassePage() {
             </div>
           </div>
           <div className="space-y-5 p-5 sm:p-6">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="nc-name">{t("adm_class_new_name")}</Label>
-                <Input
-                  id="nc-name"
-                  className="h-11 rounded-xl"
-                  placeholder="Ex: A3 - Jan 2026"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nc-session">{t("adm_class_new_session")}</Label>
-                <Input
-                  id="nc-session"
-                  className="h-11 rounded-xl"
-                  placeholder="Ex: Jan 2026"
-                  value={session}
-                  onChange={(e) => setSession(e.target.value)}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="nc-name">{t("adm_class_new_name")}</Label>
+              <Input
+                id="nc-name"
+                className="h-11 rounded-xl"
+                placeholder="Ex: A3 - Jan 2026"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="nc-description">{t("adm_class_new_description")}</Label>
+              <Textarea
+                id="nc-description"
+                className="min-h-[100px] resize-y rounded-xl"
+                placeholder={t("adm_class_new_description_ph")}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={1000}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("adm_class_new_description_hint")} ({description.length}/1000)
+              </p>
             </div>
             <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4">
               <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -145,38 +154,32 @@ export default function NouvelleClassePage() {
                   />
                 </div>
               </div>
+              {derivedSession ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t("adm_class_new_session_auto")}{" "}
+                  <span className="font-semibold text-foreground">{derivedSession}</span>
+                </p>
+              ) : (
+                <p className="mt-3 text-xs text-muted-foreground">{t("adm_class_new_session_auto_empty")}</p>
+              )}
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="nc-tuition">{t("adm_class_new_tuition")}</Label>
-                <Input
-                  id="nc-tuition"
-                  type="number"
-                  min={1}
-                  className="h-11 rounded-xl"
-                  placeholder="162000"
-                  value={tuition}
-                  onChange={(e) => setTuition(e.target.value)}
-                />
-                {tuition && !Number.isNaN(Number(tuition)) ? (
-                  <p className="text-xs text-muted-foreground">
-                    {t("adm_class_new_preview")} {formatMoney(Number(tuition))}
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nc-status">{t("adm_class_new_status")}</Label>
-                <select
-                  id="nc-status"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as AdminClassStatus)}
-                  className="flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
-                >
-                  <option value="active">{t("adm_class_badge_active")}</option>
-                  <option value="finished">{t("adm_class_badge_finished")}</option>
-                  <option value="archived">{t("adm_class_badge_archived")}</option>
-                </select>
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="nc-tuition">{t("adm_class_new_tuition")}</Label>
+              <Input
+                id="nc-tuition"
+                type="number"
+                min={1}
+                className="h-11 rounded-xl sm:max-w-md"
+                placeholder="162000"
+                value={tuition}
+                onChange={(e) => setTuition(e.target.value)}
+              />
+              {tuition && !Number.isNaN(Number(tuition)) ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("adm_class_new_preview")} {formatMoney(Number(tuition))}
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground">{t("adm_class_new_status_default")}</p>
             </div>
 
             {message ? (

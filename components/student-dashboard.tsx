@@ -1,55 +1,83 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   CalendarClock,
   ChevronRight,
-  CircleDollarSign,
   ClipboardList,
-  FileCheck2,
   FileClock,
   Home,
-  LifeBuoy,
   PieChart as PieChartIcon,
   Receipt,
   ShieldCheck,
   Sparkles,
-  UserCircle2,
   Wallet,
 } from "lucide-react"
 import Link from "next/link"
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts"
+import { paymentsService, type StudentTuitionSummary } from "@/domains/payments"
 import { useLocale } from "@/hooks/use-locale"
 
 export function StudentDashboard() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
+  const [summary, setSummary] = useState<StudentTuitionSummary>({
+    studentName: "Etudiant Demo",
+    className: "A1",
+    totalTuition: 0,
+    amountPaid: 0,
+    remainingAmount: 0,
+  })
+
+  const formatFcfa = (value: number) =>
+    `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} F CFA`
+
+  useEffect(() => {
+    const refresh = async () => setSummary(await paymentsService.getSummary())
+    void refresh()
+    window.addEventListener("student-payments-updated", refresh)
+    return () => window.removeEventListener("student-payments-updated", refresh)
+  }, [])
+
+  const paymentProgress = useMemo(() => {
+    if (summary.totalTuition <= 0) return 0
+    return Math.min(100, Math.round((summary.amountPaid / summary.totalTuition) * 100))
+  }, [summary.amountPaid, summary.totalTuition])
 
   const kpis = useMemo(
     () => [
       {
         label: t("stu_kpi_tuition"),
-        value: "450 000 F CFA",
-        note: t("stu_kpi_tuition_note"),
+        value: formatFcfa(summary.remainingAmount),
+        note:
+          summary.totalTuition > 0
+            ? `${100 - paymentProgress}% ${t("stu_kpi_tuition_note")}`
+            : t("stu_kpi_tuition_note"),
         icon: <Wallet className="size-4" />,
-        tone: "text-amber-600",
+        valueTone: "text-destructive",
+        iconTone: "bg-destructive/10 text-destructive",
+        noteTone: "text-destructive/80",
       },
       {
         label: t("stu_kpi_paid"),
-        value: "300 000 F CFA",
+        value: formatFcfa(summary.amountPaid),
         note: t("stu_kpi_paid_note"),
         icon: <ShieldCheck className="size-4" />,
-        tone: "text-emerald-600",
+        valueTone: "text-emerald-600 dark:text-emerald-400",
+        iconTone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        noteTone: "text-emerald-600/80 dark:text-emerald-400/80",
       },
       {
         label: t("stu_kpi_next"),
         value: "15 Avril 2026",
         note: t("stu_kpi_next_note"),
-        icon: <CalendarClock className="size-4" />,
-        tone: "text-primary",
+        icon: <CalendarClock className="size-4"/>,
+        valueTone: "text-foreground",
+        iconTone: "bg-primary/10 text-primary",
+        noteTone: "text-primary",
       },
     ],
-    [t],
+    [t, summary, formatFcfa, paymentProgress],
   )
 
   const recentPayments = useMemo(
@@ -61,44 +89,8 @@ export function StudentDashboard() {
     [t],
   )
 
-  const priorityActions = useMemo(
-    () => [
-      {
-        title: t("stu_pri1_title"),
-        description: t("stu_pri1_desc"),
-        href: "/dashboard/effectuer-paiement",
-        cta: t("stu_pri1_cta"),
-      },
-      {
-        title: t("stu_pri2_title"),
-        description: t("stu_pri2_desc"),
-        href: "/dashboard/reclamations",
-        cta: t("stu_pri2_cta"),
-      },
-      {
-        title: t("stu_pri3_title"),
-        description: t("stu_pri3_desc"),
-        href: "/dashboard/mes-paiements",
-        cta: t("stu_pri3_cta"),
-      },
-    ],
-    [t],
-  )
-
   const adminStatus = useMemo(
     () => [
-      {
-        label: t("stu_adm_dossier"),
-        value: t("stu_adm_complete"),
-        tone: "bg-emerald-500/10 text-emerald-600",
-        icon: <FileCheck2 className="size-3.5" />,
-      },
-      {
-        label: t("stu_adm_card"),
-        value: t("stu_adm_available"),
-        tone: "bg-emerald-500/10 text-emerald-600",
-        icon: <FileCheck2 className="size-3.5" />,
-      },
       {
         label: t("stu_adm_attest"),
         value: t("stu_adm_todo"),
@@ -111,9 +103,9 @@ export function StudentDashboard() {
 
   const paymentChannels = useMemo(
     () => [
-      { name: t("stu_ch_momo"), value: 52, color: "#2563eb" },
-      { name: t("stu_ch_desk"), value: 31, color: "#8b5cf6" },
-      { name: t("stu_ch_card"), value: 17, color: "#14b8a6" },
+      { name: t("sp_method_mtn"), value: 45, color: "#FFCC00" },
+      { name: t("sp_method_om"), value: 35, color: "#FF6600" },
+      { name: t("sp_method_cash"), value: 20, color: "#6366f1" },
     ],
     [t],
   )
@@ -123,16 +115,6 @@ export function StudentDashboard() {
       { name: t("stu_cl_done"), value: 3, color: "#16a34a" },
       { name: t("stu_cl_prog"), value: 1, color: "#f59e0b" },
       { name: t("stu_cl_rej"), value: 1, color: "#ef4444" },
-    ],
-    [t],
-  )
-
-  const strategicLinks = useMemo(
-    () => [
-      { label: t("stu_link_pay_tranche"), href: "/dashboard/effectuer-paiement", icon: <CircleDollarSign className="size-4" /> },
-      { label: t("stu_link_payments"), href: "/dashboard/mes-paiements", icon: <Receipt className="size-4" /> },
-      { label: t("stu_link_claims"), href: "/dashboard/reclamations", icon: <ClipboardList className="size-4" /> },
-      { label: t("stu_link_profile"), href: "/dashboard/mon-profil", icon: <UserCircle2 className="size-4" /> },
     ],
     [t],
   )
@@ -171,34 +153,12 @@ export function StudentDashboard() {
             <div key={kpi.label} className="rounded-xl border border-primary/20 bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-muted-foreground">{kpi.label}</p>
-                <div className="rounded-md bg-primary/10 p-1.5 text-primary">{kpi.icon}</div>
+                <div className={`rounded-md p-1.5 ${kpi.iconTone}`}>{kpi.icon}</div>
               </div>
-              <p className="mt-2 text-2xl font-bold text-foreground">{kpi.value}</p>
-              <p className={`mt-1 text-xs font-medium ${kpi.tone}`}>{kpi.note}</p>
+              <p className={`mt-2 text-2xl font-bold tabular-nums ${kpi.valueTone}`}>{kpi.value}</p>
+              <p className={`mt-1 text-xs font-medium ${kpi.noteTone}`}>{kpi.note}</p>
             </div>
           ))}
-        </div>
-
-        <div className="mt-5 rounded-xl border border-border bg-card p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <LifeBuoy className="size-4 text-primary" />
-            <h3 className="text-sm font-semibold">{t("stu_menu_title")}</h3>
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {strategicLinks.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="inline-flex items-center justify-between rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
-              >
-                <span className="inline-flex items-center gap-2 text-foreground">
-                  {item.icon}
-                  {item.label}
-                </span>
-                <ChevronRight className="size-3.5 text-muted-foreground" />
-              </Link>
-            ))}
-          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
@@ -269,53 +229,20 @@ export function StudentDashboard() {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="rounded-xl border border-border bg-card p-4 shadow-sm xl:col-span-2">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">{t("stu_act_priority")}</h3>
-              <span className="text-xs text-muted-foreground">{t("stu_act_priority_sub")}</span>
-            </div>
-            <div className="space-y-3">
-              {priorityActions.map((action) => (
-                <div key={action.title} className="rounded-lg border bg-muted/20 p-3">
-                  <p className="text-sm font-semibold text-foreground">{action.title}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{action.description}</p>
-                  <Link
-                    href={action.href}
-                    className="mt-2 inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
-                  >
-                    {action.cta}
-                    <ChevronRight className="size-3" />
-                  </Link>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-            <div className="mb-3 flex items-center gap-2">
-              <FileCheck2 className="size-4 text-primary" />
-              <h3 className="text-sm font-semibold">{t("stu_adm_status")}</h3>
-            </div>
-            <div className="space-y-3">
-              {adminStatus.map((item) => (
-                <div key={item.label} className="rounded-lg border p-3">
-                  <p className="text-sm font-medium text-foreground">{item.label}</p>
-                  <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${item.tone}`}>
-                    {item.icon}
-                    {item.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="rounded-xl border border-border bg-card p-4 shadow-sm xl:col-span-2">
-            <div className="mb-3 flex items-center gap-2">
-              <Receipt className="size-4 text-primary" />
-              <h3 className="text-sm font-semibold">{t("stu_pay_recent")}</h3>
+        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm lg:col-span-2">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Receipt className="size-4 text-primary" />
+                <h3 className="text-sm font-semibold">{t("stu_pay_recent")}</h3>
+              </div>
+              <Link
+                href="/dashboard/mes-paiements"
+                className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                {t("stu_link_payments")}
+                <ChevronRight className="size-3" />
+              </Link>
             </div>
             <div className="space-y-3">
               {recentPayments.map((payment) => (
@@ -339,6 +266,24 @@ export function StudentDashboard() {
 
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="mb-3 flex items-center gap-2">
+                <FileClock className="size-4 text-primary" />
+                <h3 className="text-sm font-semibold">{t("stu_adm_status")}</h3>
+              </div>
+              <div className="space-y-3">
+                {adminStatus.map((item) => (
+                  <div key={item.label} className="rounded-lg border p-3">
+                    <p className="text-sm font-medium text-foreground">{item.label}</p>
+                    <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${item.tone}`}>
+                      {item.icon}
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="size-4 text-primary" />
                 <h3 className="text-sm font-semibold">{t("stu_alerts")}</h3>
@@ -347,36 +292,6 @@ export function StudentDashboard() {
                 <p>{t("stu_alert_1")}</p>
                 <p>{t("stu_alert_2")}</p>
                 <p>{t("stu_alert_3")}</p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-              <h3 className="text-sm font-semibold">{t("stu_quick_title")}</h3>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Link
-                  href="/dashboard/effectuer-paiement"
-                  className="inline-flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"
-                >
-                  {t("stu_quick_pay")}
-                </Link>
-                <Link
-                  href="/dashboard/mes-paiements"
-                  className="inline-flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"
-                >
-                  {t("stu_quick_list")}
-                </Link>
-                <Link
-                  href="/dashboard/reclamations"
-                  className="inline-flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"
-                >
-                  {t("stu_quick_claim")}
-                </Link>
-                <Link
-                  href="/dashboard/mon-profil"
-                  className="inline-flex items-center justify-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"
-                >
-                  {t("stu_quick_profile")}
-                </Link>
               </div>
             </div>
           </div>

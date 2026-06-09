@@ -5,8 +5,10 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
   Filter,
   GraduationCap,
   Phone,
@@ -17,8 +19,10 @@ import {
   Users,
   Wallet,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -67,14 +71,9 @@ export default function AdminApprenantsPage() {
   const [classFilter, setClassFilter] = useState<string>("all")
   const [paymentSituation, setPaymentSituation] = useState<PaymentSituation>("all")
   const [showMoreFilters, setShowMoreFilters] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-
-  useEffect(() => {
-    const loadTimer = setTimeout(() => setLoading(false), 450)
-    return () => clearTimeout(loadTimer)
-  }, [])
 
   const classOptions = useMemo(() => adminClasses.map((c) => ({ id: c.id, name: c.name })), [adminClasses])
 
@@ -111,9 +110,18 @@ export default function AdminApprenantsPage() {
   const advancedFilterCount = useMemo(() => {
     let count = 0
     if (classFilter !== "all") count += 1
-    if (paymentSituation !== "all") count += 1
     return count
-  }, [classFilter, paymentSituation])
+  }, [classFilter])
+
+  const paymentCounts = useMemo(() => {
+    let fullyPaid = 0
+    let outstanding = 0
+    for (const l of adminLearners) {
+      if (l.due - l.paid <= 0.01) fullyPaid += 1
+      else outstanding += 1
+    }
+    return { all: adminLearners.length, fullyPaid, outstanding }
+  }, [adminLearners])
 
   const totals = useMemo(() => {
     const totalDue = filtered.reduce((s, l) => s + l.due, 0)
@@ -274,37 +282,69 @@ export default function AdminApprenantsPage() {
                   <option value="suspended">{t("adm_learn_opt_suspended")}</option>
                 </select>
               </label>
+              <div className="space-y-2">
+                <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_pay_sit")}</span>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { value: "all" as const, label: t("adm_learn_opt_pay_all"), count: paymentCounts.all, icon: Users },
+                      {
+                        value: "solde_ok" as const,
+                        label: t("adm_learn_opt_solde"),
+                        count: paymentCounts.fullyPaid,
+                        icon: CheckCircle2,
+                      },
+                      {
+                        value: "en_retard" as const,
+                        label: t("adm_learn_opt_due"),
+                        count: paymentCounts.outstanding,
+                        icon: CircleAlert,
+                      },
+                    ] as const
+                  ).map(({ value, label, count, icon: Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setPaymentSituation(value)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                        paymentSituation === value
+                          ? value === "solde_ok"
+                            ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-900 dark:text-emerald-100"
+                            : value === "en_retard"
+                              ? "border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100"
+                              : "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
+                          : "border-border bg-background text-muted-foreground hover:border-border/80 hover:bg-muted/40",
+                      )}
+                    >
+                      <Icon className="size-3.5 shrink-0 opacity-80" />
+                      {label}
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none",
+                          paymentSituation === value ? "bg-black/10" : "bg-muted",
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               {showMoreFilters ? (
                 <>
                   <label className="space-y-1.5">
                     <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_class")}</span>
-                    <div className="relative">
-                      <GraduationCap className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <select
-                        value={classFilter}
-                        onChange={(e) => setClassFilter(e.target.value)}
-                        className="h-9 w-full appearance-none rounded-xl border border-input bg-background py-1.5 pr-8 pl-9 text-xs shadow-sm"
-                      >
-                        <option value="all">{t("adm_learn_opt_all_classes")}</option>
-                        {classOptions.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_pay_sit")}</span>
-                    <select
-                      value={paymentSituation}
-                      onChange={(e) => setPaymentSituation(e.target.value as PaymentSituation)}
-                      className="h-9 w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs shadow-sm"
-                    >
-                      <option value="all">{t("adm_learn_opt_pay_all")}</option>
-                      <option value="solde_ok">{t("adm_learn_opt_solde")}</option>
-                      <option value="en_retard">{t("adm_learn_opt_due")}</option>
-                    </select>
+                    <ClassSearchSelect
+                      value={classFilter}
+                      onValueChange={setClassFilter}
+                      options={classOptions}
+                      allLabel={t("adm_learn_opt_all_classes")}
+                      searchPlaceholder={t("adm_class_search_placeholder")}
+                      emptyLabel={t("adm_class_search_empty")}
+                      moreResultsLabel={t("adm_class_search_more")}
+                      triggerClassName="h-9 text-xs"
+                    />
                   </label>
                 </>
               ) : (
@@ -416,7 +456,8 @@ export default function AdminApprenantsPage() {
                 <TableHead>{t("adm_learn_table_status")}</TableHead>
                 <TableHead className="text-right">{t("adm_learn_table_due")}</TableHead>
                 <TableHead className="text-right">{t("adm_learn_table_paid")}</TableHead>
-                <TableHead className="w-[140px]">{t("adm_learn_th_progress")}</TableHead>
+                <TableHead className="text-right">{t("adm_learn_table_remain")}</TableHead>
+                <TableHead className="w-[120px]">{t("adm_learn_th_progress")}</TableHead>
                 <TableHead className="sticky right-0 z-10 min-w-[100px] bg-card text-right shadow-[inset_1px_0_0_hsl(var(--border))]">
                   {t("adm_learn_th_actions")}
                 </TableHead>
@@ -426,7 +467,7 @@ export default function AdminApprenantsPage() {
               {loading
                 ? Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={`sk-${i}`}>
-                      <TableCell colSpan={8}>
+                      <TableCell colSpan={9}>
                         <Skeleton className="h-10 w-full" />
                       </TableCell>
                     </TableRow>
@@ -434,7 +475,7 @@ export default function AdminApprenantsPage() {
                 : null}
               {!loading && paged.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
                     <p className="font-medium text-foreground">{t("adm_learn_empty_title")}</p>
                     <p className="mt-1 text-sm">{t("adm_learn_empty_desc")}</p>
                     <Button type="button" variant="outline" size="sm" className="mt-3" onClick={resetFilters}>
@@ -474,6 +515,13 @@ export default function AdminApprenantsPage() {
                       <TableCell className="text-right tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
                         {formatMoney(l.paid)}
                       </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {reste <= 0.01 ? (
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{formatMoney(0)}</span>
+                        ) : (
+                          <span className="font-semibold text-amber-800 dark:text-amber-300">{formatMoney(reste)}</span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="space-y-1">
                           <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -482,9 +530,7 @@ export default function AdminApprenantsPage() {
                               style={{ width: `${ratio}%` }}
                             />
                           </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            {t("adm_learn_remain_lbl")} {formatMoney(reste)} · {ratio}%
-                          </p>
+                          <p className="text-[11px] text-muted-foreground">{ratio}%</p>
                         </div>
                       </TableCell>
                       <TableCell className="sticky right-0 z-10 bg-card shadow-[inset_1px_0_0_hsl(var(--border))] group-hover:bg-muted/30">
@@ -535,7 +581,7 @@ export default function AdminApprenantsPage() {
                     <Phone className="size-3.5" />
                     {l.phone}
                   </p>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
                     <div>
                       <p className="text-[11px] text-muted-foreground">{t("adm_learn_table_due")}</p>
                       <p className="font-semibold tabular-nums">{formatMoney(l.due)}</p>
@@ -544,6 +590,17 @@ export default function AdminApprenantsPage() {
                       <p className="text-[11px] text-muted-foreground">{t("adm_learn_table_paid")}</p>
                       <p className="font-semibold tabular-nums text-emerald-700">{formatMoney(l.paid)}</p>
                     </div>
+                    <div>
+                      <p className="text-[11px] text-muted-foreground">{t("adm_learn_table_remain")}</p>
+                      <p
+                        className={cn(
+                          "font-semibold tabular-nums",
+                          reste <= 0.01 ? "text-emerald-700" : "text-amber-800 dark:text-amber-300",
+                        )}
+                      >
+                        {formatMoney(reste <= 0.01 ? 0 : reste)}
+                      </p>
+                    </div>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                     <div
@@ -551,9 +608,7 @@ export default function AdminApprenantsPage() {
                       style={{ width: `${ratio}%` }}
                     />
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {t("adm_learn_remain_lbl")} {formatMoney(reste)} · {ratio}%
-                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{ratio}%</p>
                   <Button className="mt-3 w-full" variant="outline" asChild>
                     <Link href={`/dashboard/admin/apprenants/${l.id}`}>{t("adm_learn_btn_view")}</Link>
                   </Button>

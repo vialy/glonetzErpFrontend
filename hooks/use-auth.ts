@@ -11,7 +11,7 @@ interface UseAuthReturn {
   phone: string | null
   mustChangePin: boolean
   login: (phone: string, pin: string) => Promise<void>
-  changePin: (currentPin: string, newPin: string) => Promise<void>
+  changePin: (currentPin: string, newPin: string) => Promise<boolean>
   logout: () => void
   loading: boolean
   error: string | null
@@ -25,17 +25,11 @@ export function useAuth(): UseAuthReturn {
   const [error, setError] = useState<string | null>(null)
   const [attemptsRemaining, setAttemptsRemaining] = useState(authService.getAttempts())
   const [cooldownEnd, setCooldownEnd] = useState(authService.getCooldownEnd())
-  const [mustChangePin, setMustChangePin] = useState(false)
-
   const session = authService.getSession()
   const isAuthenticated = session !== null
   const role = session?.role ?? null
   const phone = session?.phone ?? null
-
-  useEffect(() => {
-    const s = authService.getSession()
-    if (s?.mustChangePin) setMustChangePin(true)
-  }, [])
+  const mustChangePin = session?.mustChangePin ?? false
 
   useEffect(() => {
     const end = authService.getCooldownEnd()
@@ -56,9 +50,7 @@ export function useAuth(): UseAuthReturn {
       authService.resetAttempts()
       setAttemptsRemaining(authService.maxAttempts)
 
-      if (response.mustChangePin) {
-        setMustChangePin(true)
-      } else {
+      if (!response.mustChangePin) {
         router.push("/dashboard")
       }
     } catch {
@@ -78,15 +70,18 @@ export function useAuth(): UseAuthReturn {
     }
   }, [router])
 
-  const changePin = useCallback(async (currentPin: string, newPin: string) => {
+  const changePin = useCallback(async (currentPin: string, newPin: string): Promise<boolean> => {
     setError(null)
     setLoading(true)
     try {
       await authService.changePin(currentPin, newPin)
-      setMustChangePin(false)
-      router.push("/dashboard")
+      authService.clearSession({ clearMockPinOverrides: false })
+      router.replace("/login?pinChanged=1")
+      router.refresh()
+      return true
     } catch {
       setError("PIN_CHANGE_FAILED")
+      return false
     } finally {
       setLoading(false)
     }

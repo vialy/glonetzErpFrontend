@@ -1,35 +1,66 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { usePathname } from "next/navigation"
 
 interface RouteLoaderContextValue {
   startLoading: () => void
+  notifyRouteReady: () => void
 }
 
 const RouteLoaderContext = createContext<RouteLoaderContextValue | null>(null)
 
-const MIN_LOADER_MS = 420
+/** Durée minimale pour éviter un flash trop court */
+const MIN_LOADER_MS = 180
+/** Sécurité si une page ne signale jamais son affichage */
+const MAX_LOADER_MS = 60_000
 
 export function RouteLoaderProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [loading, setLoading] = useState(false)
+  const [routeReady, setRouteReady] = useState(true)
   const startAtRef = useRef(0)
+
+  const notifyRouteReady = useCallback(() => {
+    setRouteReady(true)
+  }, [])
 
   const startLoading = useCallback(() => {
     startAtRef.current = Date.now()
+    setRouteReady(false)
     setLoading(true)
   }, [])
 
+  // Nouvelle route : on attend le signal "page affichée"
   useEffect(() => {
     if (!loading) return
+    setRouteReady(false)
+  }, [pathname, loading])
+
+  // Masquer seulement quand la page a signalé qu'elle est prête (+ délai mini)
+  useEffect(() => {
+    if (!loading || !routeReady) return
+
     const elapsed = Date.now() - startAtRef.current
     const remaining = Math.max(MIN_LOADER_MS - elapsed, 0)
-    const timer = window.setTimeout(() => {
-      setLoading(false)
-    }, remaining)
+    const timer = window.setTimeout(() => setLoading(false), remaining)
     return () => window.clearTimeout(timer)
-  }, [pathname, loading])
+  }, [loading, routeReady])
+
+  // Filet de sécurité
+  useEffect(() => {
+    if (!loading) return
+    const safety = window.setTimeout(() => setLoading(false), MAX_LOADER_MS)
+    return () => window.clearTimeout(safety)
+  }, [loading])
 
   useEffect(() => {
     const onClickCapture = (event: MouseEvent) => {
@@ -56,7 +87,10 @@ export function RouteLoaderProvider({ children }: { children: React.ReactNode })
     return () => document.removeEventListener("click", onClickCapture, true)
   }, [startLoading])
 
-  const value = useMemo(() => ({ startLoading }), [startLoading])
+  const value = useMemo(
+    () => ({ startLoading, notifyRouteReady }),
+    [startLoading, notifyRouteReady],
+  )
 
   return (
     <RouteLoaderContext.Provider value={value}>
@@ -77,10 +111,37 @@ export function RouteLoaderProvider({ children }: { children: React.ReactNode })
   )
 }
 
+/**
+ * À placer dans un `template.tsx` (se remonte à chaque navigation).
+ * Signale que le contenu de la nouvelle page est monté et peint.
+ */
+export function RouteReadyMarker() {
+  const pathname = usePathname()
+  const ctx = useContext(RouteLoaderContext)
+
+  useEffect(() => {
+    if (!ctx) return
+    let cancelled = false
+
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        if (!cancelled) ctx.notifyRouteReady()
+      })
+      return () => cancelAnimationFrame(raf2)
+    })
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf1)
+    }
+  }, [pathname, ctx])
+
+  return null
+}
+
 export function useRouteLoader() {
   const ctx = useContext(RouteLoaderContext)
   return {
     startLoading: ctx?.startLoading ?? (() => {}),
   }
 }
-

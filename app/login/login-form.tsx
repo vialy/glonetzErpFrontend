@@ -1,14 +1,16 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import {
-  Phone, Lock, Loader2, ShieldAlert, Clock, KeyRound,
+  Lock, Loader2, ShieldAlert, Clock, KeyRound,
   ShieldCheck, ArrowLeft, MessageSquare, CheckCircle2, Send,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PhoneInputField } from "@/components/ui/phone-input"
+import { formatPhoneE164, validatePhoneE164 } from "@/lib/phone-validation"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { useAuth } from "@/hooks/use-auth"
 import { useLocale } from "@/hooks/use-locale"
@@ -19,20 +21,21 @@ import { Alert, AlertTitle } from "@/components/ui/alert"
 type Step = "login" | "change-pin" | "forgot-phone" | "forgot-reset"
 
 export function LoginForm() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { login, changePin, loading, error, attemptsRemaining, cooldownEnd, mustChangePin } = useAuth()
   const { t } = useLocale()
 
   const [step, setStep] = useState<Step>("login")
-  const [showPinSmsBanner] = useState(() => {
-    if (typeof window === "undefined") return false
-    return new URLSearchParams(window.location.search).get("pinSms") === "1"
-  })
+  const [showPinSmsBanner, setShowPinSmsBanner] = useState(false)
+  const [showPinChangedBanner, setShowPinChangedBanner] = useState(false)
   const [animClass, setAnimClass] = useState("")
   const [skipForceChangePinRedirect, setSkipForceChangePinRedirect] = useState(false)
 
   // Login fields
   const [phone, setPhone] = useState("")
   const [pin, setPin] = useState("")
+  const [phoneError, setPhoneError] = useState("")
   const [shaking, setShaking] = useState(false)
   const [cooldownRemaining, setCooldownRemaining] = useState(0)
 
@@ -62,23 +65,35 @@ export function LoginForm() {
     }, 350)
   }
 
+  function resetLoginFields() {
+    setPin("")
+    setCurrentPin("")
+    setNewPin("")
+    setConfirmPin("")
+    setPinError("")
+    setForgotPhone("")
+    setTempPin("")
+    setResetNewPin("")
+    setResetConfirmPin("")
+    setForgotError("")
+    setPhoneError("")
+    setResetSuccess(false)
+  }
+
+  function returnToLoginStep(options?: { showPinChangedMessage?: boolean }) {
+    setSkipForceChangePinRedirect(true)
+    if (options?.showPinChangedMessage) setShowPinChangedBanner(true)
+    setStep("login")
+    setAnimClass("")
+    resetLoginFields()
+  }
+
   function goBackToLogin() {
     setSkipForceChangePinRedirect(true)
     setAnimClass("animate-slide-out-left")
     setTimeout(() => {
-      setStep("login")
+      returnToLoginStep()
       setAnimClass("animate-slide-in-right")
-      setPin("")
-      setCurrentPin("")
-      setNewPin("")
-      setConfirmPin("")
-      setPinError("")
-      setForgotPhone("")
-      setTempPin("")
-      setResetNewPin("")
-      setResetConfirmPin("")
-      setForgotError("")
-      setResetSuccess(false)
     }, 350)
   }
 
@@ -90,11 +105,17 @@ export function LoginForm() {
   }, [mustChangePin, step, skipForceChangePinRedirect])
 
   useEffect(() => {
-    if (!showPinSmsBanner || typeof window === "undefined") return
-    const url = new URL(window.location.href)
-    url.searchParams.delete("pinSms")
-    window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""))
-  }, [showPinSmsBanner])
+    if (searchParams.get("pinSms") !== "1") return
+    setShowPinSmsBanner(true)
+    returnToLoginStep()
+    router.replace("/login")
+  }, [searchParams, router])
+
+  useEffect(() => {
+    if (searchParams.get("pinChanged") !== "1") return
+    returnToLoginStep({ showPinChangedMessage: true })
+    router.replace("/login")
+  }, [searchParams, router])
 
   // Cooldown timer
   useEffect(() => {
@@ -129,15 +150,19 @@ export function LoginForm() {
     (e: React.FormEvent) => {
       e.preventDefault()
       if (loading || isCoolingDown) return
+      setPhoneError("")
+      if (!validatePhoneE164(phone)) {
+        setPhoneError(t("phone_invalid_format"))
+        return
+      }
       setSkipForceChangePinRedirect(false)
-      const fullPhone = `+237${phone.replace(/\s/g, "")}`
-      login(fullPhone, pin)
+      login(formatPhoneE164(phone), pin)
     },
-    [phone, pin, login, loading, isCoolingDown]
+    [phone, pin, login, loading, isCoolingDown, t]
   )
 
   const handleChangePin = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault()
       setPinError("")
       if (newPin !== confirmPin) {
@@ -148,7 +173,10 @@ export function LoginForm() {
         setPinError(t("pin_same_as_current"))
         return
       }
-      changePin(currentPin, newPin)
+      const ok = await changePin(currentPin, newPin)
+      if (ok) {
+        returnToLoginStep({ showPinChangedMessage: true })
+      }
     },
     [currentPin, newPin, confirmPin, changePin, t]
   )
@@ -157,11 +185,13 @@ export function LoginForm() {
     async (e: React.FormEvent) => {
       e.preventDefault()
       setForgotError("")
-      if (!forgotPhone) return
+      if (!validatePhoneE164(forgotPhone)) {
+        setForgotError(t("phone_invalid_format"))
+        return
+      }
       setForgotLoading(true)
       try {
-        const fullPhone = `+237${forgotPhone.replace(/\s/g, "")}`
-        await authService.requestPinReset(fullPhone)
+        await authService.requestPinReset(formatPhoneE164(forgotPhone))
         goToStep("forgot-reset")
       } catch {
         setForgotError("Erreur")
@@ -169,7 +199,7 @@ export function LoginForm() {
         setForgotLoading(false)
       }
     },
-    [forgotPhone]
+    [forgotPhone, t]
   )
 
   const handleResetPin = useCallback(
@@ -180,19 +210,29 @@ export function LoginForm() {
         setForgotError(t("pins_dont_match"))
         return
       }
+      if (resetNewPin === tempPin) {
+        setForgotError(t("pin_same_as_temp"))
+        return
+      }
       setForgotLoading(true)
       try {
-        const fullPhone = `+237${forgotPhone.replace(/\s/g, "")}`
-        await authService.resetPinWithCode(fullPhone, tempPin, resetNewPin)
+        await authService.resetPinWithCode(formatPhoneE164(forgotPhone), tempPin, resetNewPin)
         setResetSuccess(true)
-      } catch {
-        setForgotError("Erreur")
+      } catch (err) {
+        const code = err instanceof Error ? err.message : ""
+        if (code === "PIN_SAME_AS_TEMP") setForgotError(t("pin_same_as_temp"))
+        else if (code === "PIN_SAME_AS_CURRENT") setForgotError(t("pin_same_as_current"))
+        else if (code === "PIN_RESET_INVALID_TEMP") setForgotError(t("wrong_pin"))
+        else setForgotError("Erreur")
       } finally {
         setForgotLoading(false)
       }
     },
     [forgotPhone, tempPin, resetNewPin, resetConfirmPin, t]
   )
+
+  const phoneInvalid = phone.length > 0 && !validatePhoneE164(phone)
+  const forgotPhoneInvalid = forgotPhone.length > 0 && !validatePhoneE164(forgotPhone)
 
   const cooldownProgress = isCoolingDown ? 1 - cooldownRemaining / authService.cooldownSeconds : 0
   const circumference = 2 * Math.PI * 20
@@ -201,27 +241,27 @@ export function LoginForm() {
     "h-10 w-10 rounded-xl border-2 border-input bg-card text-base font-bold shadow-sm sm:h-12 sm:w-12 sm:text-lg lg:h-11 lg:w-11"
 
   return (
-    <div className="flex h-full min-h-0 flex-col px-5 py-6 sm:px-10 md:px-16 lg:justify-start lg:bg-card lg:px-20 lg:py-4">
+    <div className="flex h-full min-h-dvh flex-col overflow-hidden px-4 pt-24 pb-2 sm:px-8 sm:pt-28 md:px-12 lg:min-h-0 lg:justify-start lg:bg-card lg:px-16 lg:pt-14 lg:pb-3">
       {/* Logo */}
-      <div className="flex justify-center pt-4 pb-2">
+      <div className="flex justify-center pt-1.5 pb-1">
         <Image
           src="/images/logo.png"
           alt="Glonetz"
           width={220}
           height={80}
-          className="h-20 w-auto sm:h-24 lg:h-16"
+          className="h-24 w-auto sm:h-24 lg:h-18"
           priority
         />
       </div>
 
       {/* Multi-step container */}
-      <div className="relative mx-auto w-full max-w-md flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
+      <div className="relative mx-auto w-full max-w-md flex-1 min-h-0 overflow-x-hidden overflow-y-hidden">
 
         {/* ===== STEP 1: LOGIN ===== */}
         {step === "login" && (
           <form
             onSubmit={handleLogin}
-            className={`flex flex-col justify-center gap-6 py-6 ${animClass}`}
+            className={`flex h-full flex-col justify-start gap-3.5 py-0.5 ${animClass}`}
           >
             {showPinSmsBanner ? (
               <Alert className="border-primary/30 bg-primary/5 text-foreground">
@@ -229,8 +269,14 @@ export function LoginForm() {
                 <AlertTitle className="text-foreground leading-snug">{t("mgr_pin_sms_success")}</AlertTitle>
               </Alert>
             ) : null}
+            {showPinChangedBanner ? (
+              <Alert className="border-primary/30 bg-primary/5 text-foreground">
+                <CheckCircle2 className="text-primary" />
+                <AlertTitle className="text-foreground leading-snug">{t("login_pin_changed_success")}</AlertTitle>
+              </Alert>
+            ) : null}
             <div className="text-center">
-              <h1 className="text-2xl font-bold text-foreground sm:text-3xl">{t("login_title")}</h1>
+              <h1 className="text-xl font-bold text-foreground sm:text-2xl">{t("login_title")}</h1>
             </div>
 
             {/* Erreur PIN uniquement (pas le verrouillage 3 échecs — celui-ci utilise le bandeau cooldown) */}
@@ -269,23 +315,23 @@ export function LoginForm() {
               </div>
             )}
 
-            <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3.5">
               {/* Phone */}
               <div className="flex flex-col gap-2">
                 <Label htmlFor="phone" className="text-sm font-medium text-foreground">
                   {t("phone_label")}<span className="text-destructive"> *</span>
                 </Label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute left-0 top-0 flex h-12 items-center pl-3">
-                    <Phone className="size-4 text-muted-foreground" />
-                    <span className="ml-2 border-r border-border pr-2 text-sm font-medium text-foreground">+237</span>
-                  </div>
-                  <Input
-                    id="phone" type="tel" placeholder={t("phone_placeholder")} value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="h-12 pl-[5.5rem] text-base" autoComplete="tel" disabled={isCoolingDown} required
-                  />
-                </div>
+                <PhoneInputField
+                  id="phone"
+                  value={phone}
+                  onChange={setPhone}
+                  placeholder={t("phone_placeholder")}
+                  searchPlaceholder={t("phone_country_search")}
+                  disabled={isCoolingDown}
+                  invalid={Boolean(phoneError) || phoneInvalid}
+                  defaultCountry="cm"
+                />
+                {phoneError ? <p className="text-xs text-destructive">{phoneError}</p> : null}
               </div>
 
               {/* PIN */}
@@ -323,8 +369,8 @@ export function LoginForm() {
 
             {/* Submit */}
             <Button
-              type="submit" disabled={loading || isCoolingDown || pin.length < 4}
-              className="h-13 w-full bg-primary text-base font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 disabled:opacity-50"
+              type="submit" disabled={loading || isCoolingDown || pin.length < 4 || !validatePhoneE164(phone)}
+              className="h-12 w-full bg-primary text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 disabled:opacity-50"
             >
               {loading ? (
                 <span className="flex items-center gap-2"><Loader2 className="size-5 animate-spin" />{t("login_loading")}</span>
@@ -462,21 +508,19 @@ export function LoginForm() {
               <Label htmlFor="forgot-phone" className="text-sm font-medium text-foreground">
                 {t("phone_label")}<span className="text-destructive"> *</span>
               </Label>
-              <div className="relative">
-                <div className="pointer-events-none absolute left-0 top-0 flex h-12 items-center pl-3">
-                  <Phone className="size-4 text-muted-foreground" />
-                  <span className="ml-2 border-r border-border pr-2 text-sm font-medium text-foreground">+237</span>
-                </div>
-                <Input
-                  id="forgot-phone" type="tel" placeholder={t("phone_placeholder")} value={forgotPhone}
-                  onChange={(e) => setForgotPhone(e.target.value)}
-                  className="h-12 pl-[5.5rem] text-base" autoComplete="tel" required
-                />
-              </div>
+              <PhoneInputField
+                id="forgot-phone"
+                value={forgotPhone}
+                onChange={setForgotPhone}
+                placeholder={t("phone_placeholder")}
+                searchPlaceholder={t("phone_country_search")}
+                invalid={Boolean(forgotError && forgotPhoneInvalid) || forgotPhoneInvalid}
+                defaultCountry="cm"
+              />
             </div>
 
             <Button
-              type="submit" disabled={forgotLoading || !forgotPhone}
+              type="submit" disabled={forgotLoading || !validatePhoneE164(forgotPhone)}
               className="h-13 w-full bg-primary text-base font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 disabled:opacity-50"
             >
               {forgotLoading ? (
@@ -528,7 +572,7 @@ export function LoginForm() {
                   </div>
                   <h2 className="mt-3 text-lg font-bold sm:text-xl">{t("sms_sent_title")}</h2>
                   <p className="mt-1.5 text-center text-sm leading-relaxed text-primary-foreground/80">
-                    {t("sms_sent_subtitle")} <span className="font-bold">+237{forgotPhone}</span>
+                    {t("sms_sent_subtitle")} <span className="font-bold">{formatPhoneE164(forgotPhone)}</span>
                   </p>
                 </div>
 
@@ -610,7 +654,7 @@ export function LoginForm() {
       </div>
 
       {/* Language */}
-      <div className="mt-auto flex justify-center pt-2 lg:pt-3">
+      <div className="mt-1 flex justify-center pt-1 lg:mt-2 lg:pt-2">
         <LanguageSwitcher />
       </div>
     </div>

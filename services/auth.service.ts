@@ -3,6 +3,7 @@ import type { LoginResponse, UserRole } from "@/types"
 const SESSION_KEY = "glonetz_session"
 const ATTEMPTS_KEY = "glonetz_attempts"
 const COOLDOWN_KEY = "glonetz_cooldown"
+const PIN_RESET_TEMP_KEY = "glonetz_pin_reset_temp"
 /**
  * Overrides PIN / mustChangePin (mock, localStorage). Réinitialisé à la déconnexion via `clearAuthBrowserState`.
  * Incrémenter la clé si besoin d’invalider d’anciens stockages (v2 : reset global → manager 5678 par défaut).
@@ -136,17 +137,49 @@ export const AuthService = {
   },
 
   // ---- Demande de reset PIN ----
-  async requestPinReset(_phone: string): Promise<void> {
+  async requestPinReset(phone: string): Promise<void> {
     await delay(1000)
+    const acc = getMergedAccount(phone)
+    if (!acc) return
+
+    const tempPin = randomFourDigitPin()
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(
+        PIN_RESET_TEMP_KEY,
+        JSON.stringify({ phone, tempPin, createdAt: Date.now() }),
+      )
+    }
+    console.info(`[Glonetz SMS mock] Code temporaire pour ${phone}: ${tempPin}`)
   },
 
   // ---- Reset PIN avec code temporaire ----
-  async resetPinWithCode(
-    _phone: string,
-    _tempPin: string,
-    _newPin: string,
-  ): Promise<void> {
+  async resetPinWithCode(phone: string, tempPin: string, newPin: string): Promise<void> {
     await delay(800)
+
+    const acc = getMergedAccount(phone)
+    if (!acc) throw new Error("PIN_RESET_FAILED")
+
+    if (!/^\d{4}$/.test(newPin)) throw new Error("PIN_RESET_FAILED")
+
+    if (newPin === tempPin) throw new Error("PIN_SAME_AS_TEMP")
+    if (newPin === acc.pin) throw new Error("PIN_SAME_AS_CURRENT")
+
+    if (typeof sessionStorage !== "undefined") {
+      const raw = sessionStorage.getItem(PIN_RESET_TEMP_KEY)
+      if (!raw) throw new Error("PIN_RESET_INVALID_TEMP")
+      try {
+        const pending = JSON.parse(raw) as { phone?: string; tempPin?: string }
+        if (pending.phone !== phone || pending.tempPin !== tempPin) {
+          throw new Error("PIN_RESET_INVALID_TEMP")
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message === "PIN_RESET_INVALID_TEMP") throw e
+        throw new Error("PIN_RESET_INVALID_TEMP")
+      }
+      sessionStorage.removeItem(PIN_RESET_TEMP_KEY)
+    }
+
+    setAccountOverride(phone, { pin: newPin, mustChangePin: false })
   },
 
   // ---- Gestion session (cookies + tentatives) ----

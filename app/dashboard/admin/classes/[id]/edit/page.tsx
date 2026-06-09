@@ -4,7 +4,12 @@ import Link from "next/link"
 import { useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { ArrowLeft, Save } from "lucide-react"
-import { getAdminClasses, getClassById, type AdminClassStatus } from "@/services/admin-mock.service"
+import {
+  getAdminClasses,
+  getClassById,
+  updateAdminClass,
+  type AdminClassStatus,
+} from "@/services/admin-mock.service"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { useLocale } from "@/hooks/use-locale"
 
@@ -18,6 +23,7 @@ export default function EditClassPage() {
   const router = useRouter()
 
   const [name, setName] = useState(cls?.name ?? "")
+  const [description, setDescription] = useState(cls?.description ?? "")
   const [session, setSession] = useState(cls?.session ?? "")
   const [status, setStatus] = useState<AdminClassStatus>(cls?.status ?? "active")
   const [tuition, setTuition] = useState(String(cls?.tuitionAmount ?? ""))
@@ -30,13 +36,14 @@ export default function EditClassPage() {
     if (!session.trim()) list.push(t("adm_class_edit_err_session"))
     const amount = Number(tuition)
     if (!tuition || Number.isNaN(amount) || amount <= 0) list.push(t("adm_class_edit_err_tuition"))
+    if (description.length > 1000) list.push(t("adm_class_new_err_description_len"))
     if (cls && name.trim() && session.trim()) {
       const key = `${name.trim().toLowerCase()}::${session.trim().toLowerCase()}`
       const exists = getAdminClasses().some((c) => c.id !== cls.id && `${c.name.toLowerCase()}::${c.session.toLowerCase()}` === key)
       if (exists) list.push(t("adm_class_edit_err_dup"))
     }
     return list
-  }, [name, session, tuition, cls, t])
+  }, [name, description, session, tuition, cls, t])
 
   if (!cls) return <div className="px-4 py-8 md:px-6 lg:px-8">{t("adm_class_fiche_notfound")}</div>
 
@@ -55,9 +62,23 @@ export default function EditClassPage() {
 
       <div className="mt-4 rounded-xl border bg-card p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <label className="text-sm">
+          <label className="text-sm md:col-span-2">
             {t("adm_class_edit_name")}
             <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded-lg border bg-background px-3 py-2" />
+          </label>
+          <label className="text-sm md:col-span-2">
+            {t("adm_class_edit_description")}
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={1000}
+              rows={4}
+              className="mt-1 w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm"
+              placeholder={t("adm_class_new_description_ph")}
+            />
+            <span className="mt-1 block text-xs text-muted-foreground">
+              {description.length}/1000
+            </span>
           </label>
           <label className="text-sm">
             {t("adm_class_edit_session")}
@@ -101,7 +122,15 @@ export default function EditClassPage() {
             type="button"
             onClick={() => {
               setTouched(true)
-              if (errors.length === 0) setSaved(true)
+              if (errors.length > 0 || !cls) return
+              updateAdminClass(cls.id, {
+                name: name.trim(),
+                description: description.trim(),
+                session: session.trim(),
+                status,
+                tuitionAmount: Number(tuition),
+              })
+              setSaved(true)
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
           >

@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MobileBackButton } from "@/components/mobile-back-button"
+import { PaymentMethodPicker, paymentMethodNeedsPhone } from "@/components/paiements/payment-method-picker"
+import { StudentPaymentMobile } from "@/components/paiements/student-payment-mobile"
 import {
   paymentsService,
   type PaymentMethod,
@@ -15,6 +17,7 @@ import {
 } from "@/domains/payments"
 import { ApiClientError } from "@/core/api/client"
 import { formatFcfaForPdf, sanitizeTextForPdf } from "@/lib/pdf-text"
+import { useAuth } from "@/hooks/use-auth"
 import { useLocale } from "@/hooks/use-locale"
 
 function useFormatFcfa(locale: string) {
@@ -24,6 +27,7 @@ function useFormatFcfa(locale: string) {
 
 export default function EffectuerPaiementPage() {
   const { t, locale } = useLocale()
+  const { phone: sessionPhone } = useAuth()
   const formatFcfa = useMemo(() => useFormatFcfa(locale), [locale])
 
   const [summary, setSummary] = useState<StudentTuitionSummary>({
@@ -48,6 +52,10 @@ export default function EffectuerPaiementPage() {
     return () => window.removeEventListener("student-payments-updated", refresh)
   }, [])
 
+  useEffect(() => {
+    if (!phone && sessionPhone) setPhone(sessionPhone.replace(/^\+237/, ""))
+  }, [sessionPhone, phone])
+
   const remainingAfterInput = useMemo(() => {
     const amount = Number(amountInput || "0")
     if (!Number.isFinite(amount) || amount <= 0) return summary.remainingAmount
@@ -61,12 +69,25 @@ export default function EffectuerPaiementPage() {
 
   const submitPayment = async () => {
     if (submitting) return
+    const amount = Number(amountInput)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage({ type: "error", text: t("sp_err_amount") })
+      return
+    }
+    if (paymentMethodNeedsPhone(method) && !phone.trim()) {
+      setMessage({ type: "error", text: t("sp_mob_phone_required") })
+      return
+    }
+
     setSubmitting(true)
     setMessage(null)
-    const amount = Number(amountInput)
     try {
-      await new Promise((resolve) => setTimeout(resolve, 700))
-      const payment = await paymentsService.createPayment({ amount, paymentMethod: method, note })
+      const payment = await paymentsService.createPayment({
+        amount,
+        paymentMethod: method,
+        phoneNumber: phone.trim() || undefined,
+        note,
+      })
       setLastPayment(payment)
       setSummary(await paymentsService.getSummary())
       setAmountInput("")
@@ -91,6 +112,10 @@ export default function EffectuerPaiementPage() {
         setMessage({ type: "error", text: t("sp_err_exceed") })
       } else if (code === "INVALID_AMOUNT") {
         setMessage({ type: "error", text: t("sp_err_amount") })
+      } else if (code === "PHONE_REQUIRED") {
+        setMessage({ type: "error", text: t("sp_mob_phone_required") })
+      } else if (code === "UNSUPPORTED_PAYMENT_METHOD") {
+        setMessage({ type: "error", text: t("sp_err_generic") })
       } else {
         setMessage({ type: "error", text: t("sp_err_generic") })
       }
@@ -122,7 +147,7 @@ export default function EffectuerPaiementPage() {
             reader.onloadend = () => resolve(String(reader.result))
             reader.onerror = () => reject(new Error("LOGO_READ_FAILED"))
             reader.readAsDataURL(blob)
-          })
+          }),
       )
       .catch(() => "")
 
@@ -178,90 +203,112 @@ export default function EffectuerPaiementPage() {
   }
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
-      <MobileBackButton />
-      <div
-        className={`fixed top-16 left-1/2 z-[110] w-[92%] max-w-xl -translate-x-1/2 rounded-xl border bg-card/95 px-4 py-2.5 shadow-lg backdrop-blur transition-all duration-300 ${
-          submitting || message ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0 pointer-events-none"
-        } ${
-          submitting
-            ? "border-primary/30"
-            : message?.type === "success"
-              ? "border-green-500/25"
-              : message?.type === "error"
-                ? "border-destructive/30"
-                : "border-border"
-        }`}
-      >
-        {submitting ? (
-          <div>
-            <p className="text-sm font-medium text-foreground">{t("sp_processing")}</p>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
-              <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
-            </div>
-          </div>
-        ) : message ? (
-          <p className={`text-sm font-medium ${message.type === "success" ? "text-green-700" : "text-destructive"}`}>
-            {message.text}
-          </p>
-        ) : null}
-      </div>
-      <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-primary to-accent text-primary-foreground shadow-lg">
-        <div className="p-5 md:p-6">
-          <h1 className="text-xl font-bold md:text-2xl">{t("sp_title")}</h1>
-          <p className="mt-1 text-sm text-primary-foreground/85">{t("sp_subtitle")}</p>
-          <p className="mt-2 text-sm text-primary-foreground/90">
-            {t("sp_class_line")} <span className="font-semibold">{summary.className}</span> — {t("sp_fees_total")}{" "}
-            <span className="font-semibold">{formatFcfa(summary.totalTuition)}</span>
-          </p>
-        </div>
-        <div className="bg-black/10 px-5 py-3 md:px-6">
-          <div className="flex items-center justify-between text-xs text-primary-foreground/90">
-            <span>{t("sp_progress")}</span>
-            <span>{Math.round(progressPercent)}%</span>
-          </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/25">
-            <div className="h-full rounded-full bg-white transition-all" style={{ width: `${progressPercent}%` }} />
-          </div>
-        </div>
-      </div>
+    <>
+      <StudentPaymentMobile
+        summary={summary}
+        formatFcfa={formatFcfa}
+        progressPercent={progressPercent}
+        amountInput={amountInput}
+        setAmountInput={setAmountInput}
+        method={method}
+        setMethod={setMethod}
+        phone={phone}
+        setPhone={setPhone}
+        note={note}
+        setNote={setNote}
+        remainingAfterInput={remainingAfterInput}
+        submitting={submitting}
+        message={message}
+        lastPayment={lastPayment}
+        onSubmit={submitPayment}
+        onDownloadReceipt={downloadReceipt}
+        defaultPhone={sessionPhone}
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="border-primary/20 shadow-sm">
-          <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground">{t("sp_card_total")}</p>
-            <p className="mt-1 text-xl font-bold">{formatFcfa(summary.totalTuition)}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-primary/20 shadow-sm">
-          <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground">{t("sp_card_paid")}</p>
-            <p className="mt-1 text-xl font-bold text-primary">{formatFcfa(summary.amountPaid)}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-primary/20 shadow-sm">
-          <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground">{t("sp_card_remain")}</p>
-            <p className="mt-1 text-xl font-bold text-destructive">{formatFcfa(summary.remainingAmount)}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <Card className="xl:col-span-2 border-primary/15 shadow-sm overflow-hidden">
+      <div className="hidden space-y-6 p-4 md:block md:p-6">
+        <MobileBackButton />
+        <div
+          className={`fixed top-16 left-1/2 z-[110] w-[92%] max-w-xl -translate-x-1/2 rounded-xl border bg-card/95 px-4 py-2.5 shadow-lg backdrop-blur transition-all duration-300 ${
+            submitting || message ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0 pointer-events-none"
+          } ${
+            submitting
+              ? "border-primary/30"
+              : message?.type === "success"
+                ? "border-green-500/25"
+                : message?.type === "error"
+                  ? "border-destructive/30"
+                  : "border-border"
+          }`}
+        >
           {submitting ? (
-            <div className="h-1 w-full overflow-hidden bg-primary/10">
-              <div className="h-full w-1/2 animate-pulse bg-primary" />
+            <div>
+              <p className="text-sm font-medium text-foreground">{t("sp_processing")}</p>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+                <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+              </div>
             </div>
+          ) : message ? (
+            <p className={`text-sm font-medium ${message.type === "success" ? "text-green-700" : "text-destructive"}`}>
+              {message.text}
+            </p>
           ) : null}
-          <CardHeader className="pb-1">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CreditCard className="size-4 text-primary" />
-              {t("sp_new_payment")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        </div>
+
+        <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-primary to-accent text-primary-foreground shadow-lg">
+          <div className="p-5 md:p-6">
+            <h1 className="text-xl font-bold md:text-2xl">{t("sp_title")}</h1>
+            <p className="mt-1 text-sm text-primary-foreground/85">{t("sp_subtitle")}</p>
+            <p className="mt-2 text-sm text-primary-foreground/90">
+              {t("sp_class_line")} <span className="font-semibold">{summary.className}</span> — {t("sp_fees_total")}{" "}
+              <span className="font-semibold">{formatFcfa(summary.totalTuition)}</span>
+            </p>
+          </div>
+          <div className="bg-black/10 px-5 py-3 md:px-6">
+            <div className="flex items-center justify-between text-xs text-primary-foreground/90">
+              <span>{t("sp_progress")}</span>
+              <span>{Math.round(progressPercent)}%</span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/25">
+              <div className="h-full rounded-full bg-white transition-all" style={{ width: `${progressPercent}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Card className="border-primary/20 shadow-sm">
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground">{t("sp_card_total")}</p>
+              <p className="mt-1 text-xl font-bold">{formatFcfa(summary.totalTuition)}</p>
+            </CardContent>
+          </Card>
+          <Card className="border-primary/20 shadow-sm">
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground">{t("sp_card_paid")}</p>
+              <p className="mt-1 text-xl font-bold text-emerald-600">{formatFcfa(summary.amountPaid)}</p>
+            </CardContent>
+          </Card>
+          <Card className="border-primary/20 shadow-sm">
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground">{t("sp_card_remain")}</p>
+              <p className="mt-1 text-xl font-bold text-destructive">{formatFcfa(summary.remainingAmount)}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+          <Card className="xl:col-span-2 border-primary/15 shadow-sm overflow-hidden">
+            {submitting ? (
+              <div className="h-1 w-full overflow-hidden bg-primary/10">
+                <div className="h-full w-1/2 animate-pulse bg-primary" />
+              </div>
+            ) : null}
+            <CardHeader className="pb-1">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <CreditCard className="size-4 text-primary" />
+                {t("sp_new_payment")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="payment-amount">{t("sp_label_amount")}</Label>
                 <Input
@@ -273,19 +320,25 @@ export default function EffectuerPaiementPage() {
                   max={summary.remainingAmount}
                 />
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="phone-number">{t("sp_label_phone")}</Label>
-                <Input
-                  id="phone-number"
-                  type="tel"
-                  placeholder={t("sp_ph_phone")}
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                />
+                <Label>{t("sp_label_method")}</Label>
+                <PaymentMethodPicker value={method} onChange={setMethod} />
               </div>
+
+              {paymentMethodNeedsPhone(method) ? (
+                <div className="space-y-2">
+                  <Label htmlFor="phone-number">{t("sp_label_phone")}</Label>
+                  <Input
+                    id="phone-number"
+                    type="tel"
+                    placeholder={t("sp_ph_phone")}
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+              ) : null}
+
               <div className="space-y-2">
                 <Label htmlFor="payment-note">{t("sp_label_note")}</Label>
                 <Input
@@ -295,87 +348,87 @@ export default function EffectuerPaiementPage() {
                   onChange={(e) => setNote(e.target.value)}
                 />
               </div>
-            </div>
 
-            {message ? (
-              <div
-                className={
-                  message.type === "success"
-                    ? "rounded-xl border border-green-500/25 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400"
-                    : "rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-                }
-              >
-                {message.text}
-              </div>
-            ) : null}
-
-            <div className="rounded-xl border border-primary/15 bg-primary/5 p-3 text-sm">
-              <p className="text-muted-foreground">
-                {t("sp_remain_after")}{" "}
-                <span className="font-semibold text-foreground">{formatFcfa(remainingAfterInput)}</span>
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button className="sm:min-w-44" onClick={submitPayment} disabled={summary.remainingAmount <= 0 || submitting}>
-                {submitting ? t("sp_submitting") : t("sp_submit")}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={submitting}
-                onClick={() => {
-                  setAmountInput("")
-                  setPhone("")
-                  setNote("")
-                  setMessage(null)
-                }}
-              >
-                {t("sp_reset")}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          <Card className="border-primary/15 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{t("sp_result_title")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {message?.type === "success" ? (
-                <div className="rounded-lg border border-green-500/25 bg-green-500/10 p-3 text-sm">
-                  <div className="flex items-center gap-2 font-medium text-green-700 dark:text-green-400">
-                    <CircleCheck className="size-4" />
-                    {t("sp_success_badge")}
-                  </div>
-                  <p className="mt-1 text-muted-foreground">{message.text}</p>
+              {message ? (
+                <div
+                  className={
+                    message.type === "success"
+                      ? "rounded-xl border border-green-500/25 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400"
+                      : "rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+                  }
+                >
+                  {message.text}
                 </div>
               ) : null}
-              <p className="text-sm text-muted-foreground">{t("sp_status_hint")}</p>
+
+              <div className="rounded-xl border border-primary/15 bg-primary/5 p-3 text-sm">
+                <p className="text-muted-foreground">
+                  {t("sp_remain_after")}{" "}
+                  <span className="font-semibold text-foreground">{formatFcfa(remainingAfterInput)}</span>
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button className="sm:min-w-44" onClick={submitPayment} disabled={summary.remainingAmount <= 0 || submitting}>
+                  {submitting ? t("sp_submitting") : t("sp_submit")}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={submitting}
+                  onClick={() => {
+                    setAmountInput("")
+                    setPhone("")
+                    setNote("")
+                    setMessage(null)
+                  }}
+                >
+                  {t("sp_reset")}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
-          <Card className="border-primary/15 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{t("sp_receipt_title")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">{t("sp_receipt_hint")}</div>
-              <Button variant="outline" className="w-full" onClick={downloadReceipt} disabled={!lastPayment}>
-                <ReceiptText className="mr-2 size-4" />
-                {t("sp_download")}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="space-y-4">
+            <Card className="border-primary/15 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">{t("sp_result_title")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {message?.type === "success" ? (
+                  <div className="rounded-lg border border-green-500/25 bg-green-500/10 p-3 text-sm">
+                    <div className="flex items-center gap-2 font-medium text-green-700 dark:text-green-400">
+                      <CircleCheck className="size-4" />
+                      {t("sp_success_badge")}
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{message.text}</p>
+                  </div>
+                ) : null}
+                <p className="text-sm text-muted-foreground">{t("sp_status_hint")}</p>
+              </CardContent>
+            </Card>
 
-          <Card className="border-primary/15 shadow-sm">
-            <CardContent className="flex items-start gap-3 pt-6 text-sm text-muted-foreground">
-              <ShieldCheck className="mt-0.5 size-4 text-primary" />
-              {t("sp_secure_note")}
-            </CardContent>
-          </Card>
+            <Card className="border-primary/15 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">{t("sp_receipt_title")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">{t("sp_receipt_hint")}</div>
+                <Button variant="outline" className="w-full" onClick={downloadReceipt} disabled={!lastPayment}>
+                  <ReceiptText className="mr-2 size-4" />
+                  {t("sp_download")}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-primary/15 shadow-sm">
+              <CardContent className="flex items-start gap-3 pt-6 text-sm text-muted-foreground">
+                <ShieldCheck className="mt-0.5 size-4 text-primary" />
+                {t("sp_secure_note")}
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }

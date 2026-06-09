@@ -67,6 +67,7 @@ export default function ManagerApprenantsPage() {
 
   const refresh = useCallback(() => {
     setLearners(ManagerLearnersService.getAll())
+    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -74,11 +75,6 @@ export default function ManagerApprenantsPage() {
     window.addEventListener("manager-learners-updated", refresh)
     return () => window.removeEventListener("manager-learners-updated", refresh)
   }, [refresh])
-
-  useEffect(() => {
-    const id = setTimeout(() => setLoading(false), 380)
-    return () => clearTimeout(id)
-  }, [])
 
   return (
     <div className="flex min-h-0 flex-col">

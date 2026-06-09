@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { LoginForm } from "./login-form"
@@ -9,25 +9,27 @@ import { useLocale } from "@/hooks/use-locale"
 
 export default function LoginPage() {
   const router = useRouter()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, mustChangePin } = useAuth()
   const { t } = useLocale()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !mustChangePin) {
       router.replace("/dashboard")
     } else {
       setReady(true)
     }
-  }, [isAuthenticated, router])
+  }, [isAuthenticated, mustChangePin, router])
 
   if (!ready) return null
 
   return (
-    <div className="flex min-h-dvh lg:h-dvh lg:overflow-hidden">
+    <div className="flex min-h-dvh overflow-hidden lg:h-dvh">
       {/* Left - Login form */}
-      <div className="relative pt-8 w-full bg-gradient-to-br from-secondary via-card to-accent/20 lg:pt-24 lg:w-1/2 lg:bg-none lg:bg-card">
-        <LoginForm />
+      <div className="relative w-full bg-gradient-to-br from-secondary via-card to-accent/20 lg:w-1/2 lg:bg-none lg:bg-card">
+        <Suspense fallback={null}>
+          <LoginForm />
+        </Suspense>
       </div>
 
       {/* Right - Hero image (hidden on mobile) */}

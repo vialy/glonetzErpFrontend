@@ -30,7 +30,7 @@ function deskPaymentToAdminItem(learnerId: string, fullName: string, className: 
   }
 }
 
-function buildManagerScopedPayments(): AdminPaymentItem[] {
+export function buildManagerScopedPayments(): AdminPaymentItem[] {
   const learners = ManagerLearnersService.getAll()
   const ids = new Set(learners.map((l) => l.id))
   const fromDesk = learners.flatMap((l) =>

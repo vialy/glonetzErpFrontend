@@ -1,8 +1,9 @@
 "use client"
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
-import { adminExpenses, adminUsers } from "@/services/admin-mock.service"
+import { adminExpenses, getAdminUsers } from "@/services/admin-mock.service"
 import { useAdminClasses } from "@/hooks/use-admin-classes"
+import { useAdminUsers } from "@/hooks/use-admin-users"
 import { ManagerWalletService } from "@/domains/manager-wallet"
 import {
   computePeriodRange,
@@ -75,6 +76,7 @@ export function useFinanceContext() {
 }
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
+  const adminUsersList = useAdminUsers()
   const adminClassesList = useAdminClasses()
   const tuitionIn = useMemo(() => adminClassesList.reduce((sum, c) => sum + c.totalPaid, 0), [adminClassesList])
   const managerOutSeed = useMemo(() => adminExpenses.filter((e) => e.type === "manager").reduce((sum, e) => sum + e.amount, 0), [])
@@ -104,8 +106,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [managerAppBalances, setManagerAppBalances] = useState<Record<string, number>>({})
   const [managerWalletTick, setManagerWalletTick] = useState(0)
   const managers = useMemo(
-    () => adminUsers.filter((u) => u.role === "manager").map((u) => ({ id: u.id, fullName: u.fullName })),
-    []
+    () =>
+      adminUsersList
+        .filter((u) => u.role === "manager" && u.status === "active")
+        .map((u) => ({ id: u.id, fullName: u.fullName })),
+    [adminUsersList],
   )
 
   useEffect(() => {
@@ -229,7 +234,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (!label.trim()) return { ok: false, reason: "Motif requis" }
     if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: "Montant invalide" }
     if (amount > wallet.currentBalance) return { ok: false, reason: "Solde insuffisant" }
-    const managerUser = adminUsers.find((u) => u.id === managerId)
+    const managerUser = getAdminUsers().find((u) => u.id === managerId)
     const operationId = `fo-${Date.now()}`
     setOperations((prev) => [
       ...prev,

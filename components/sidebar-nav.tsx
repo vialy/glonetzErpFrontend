@@ -135,7 +135,7 @@ const adminSections: NavSectionDef[] = [
   },
 ]
 
-function getSectionsByRole(role: UserRole | null): NavSectionDef[] {
+export function getDashboardNavSections(role: UserRole | null): NavSectionDef[] {
   if (role === "student") return studentSections
   if (role === "manager") return managerSections
   if (role === "accountant") return accountantSections
@@ -155,7 +155,7 @@ export function SidebarNav({
   const pathname = usePathname()
   const router = useRouter()
   const { startLoading } = useRouteLoader()
-  const navSections = getSectionsByRole(role ?? null)
+  const navSections = getDashboardNavSections(role ?? null)
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>

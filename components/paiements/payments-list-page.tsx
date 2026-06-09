@@ -58,6 +58,17 @@ import {
   type AdminPaymentItem,
 } from "@/services/admin-mock.service"
 import { cn } from "@/lib/utils"
+import {
+  computePeriodRange,
+  defaultManagerPeriodFilter,
+  periodRangeToYmd,
+  type ManagerPeriodFilterValue,
+  type PeriodPreset,
+} from "@/lib/manager-period-range"
+import {
+  PaymentPeriodSelect,
+  paymentPeriodLabel,
+} from "@/components/paiements/payment-period-select"
 import { useLocale } from "@/hooks/use-locale"
 import type { TranslationKey } from "@/services/i18n"
 
@@ -208,8 +219,11 @@ export function PaymentsListPage({
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const [query, setQuery] = useState("")
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
+  const [periodFilter, setPeriodFilter] = useState<ManagerPeriodFilterValue>(defaultManagerPeriodFilter())
+  const dateBounds = useMemo(
+    () => periodRangeToYmd(computePeriodRange(periodFilter)),
+    [periodFilter],
+  )
   const [statusFilter, setStatusFilter] = useState<"all" | AdminPaymentItem["status"]>("all")
   const [methodFilter, setMethodFilter] = useState<"all" | AdminPaymentItem["method"]>("all")
   const [classFilter, setClassFilter] = useState<string>("all")
@@ -230,7 +244,7 @@ export function PaymentsListPage({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return payments.filter((p) => {
-      if (!inDateRange(p.createdAt, dateFrom, dateTo)) return false
+      if (!inDateRange(p.createdAt, dateBounds.from, dateBounds.to)) return false
       if (statusFilter !== "all" && p.status !== statusFilter) return false
       if (methodFilter !== "all" && p.method !== methodFilter) return false
       if (classFilter !== "all" && p.className !== classFilter) return false
@@ -238,19 +252,22 @@ export function PaymentsListPage({
       const hay = `${p.id} ${p.learnerName} ${p.className} ${p.operatorReference ?? ""} ${p.method}`.toLowerCase()
       return hay.includes(q)
     })
-  }, [payments, query, dateFrom, dateTo, statusFilter, methodFilter, classFilter])
+  }, [payments, query, dateBounds.from, dateBounds.to, statusFilter, methodFilter, classFilter])
+
+  const periodActive =
+    periodFilter.preset !== "all" &&
+    !(periodFilter.preset === "custom" && (!periodFilter.customFrom.trim() || !periodFilter.customTo.trim()))
 
   const hasActiveFilters = useMemo(
     () =>
       Boolean(
         query.trim() ||
-          dateFrom ||
-          dateTo ||
+          periodActive ||
           statusFilter !== "all" ||
           methodFilter !== "all" ||
           classFilter !== "all",
       ),
-    [query, dateFrom, dateTo, statusFilter, methodFilter, classFilter],
+    [query, periodActive, statusFilter, methodFilter, classFilter],
   )
   const advancedFilterCount = useMemo(() => {
     let count = 0
@@ -274,7 +291,7 @@ export function PaymentsListPage({
 
   useEffect(() => {
     setPage(1)
-  }, [query, dateFrom, dateTo, statusFilter, methodFilter, classFilter, pageSize])
+  }, [query, periodFilter, statusFilter, methodFilter, classFilter, pageSize])
 
   useEffect(() => {
     if (page > pageCount) setPage(pageCount)
@@ -308,11 +325,18 @@ export function PaymentsListPage({
 
   function resetFilters() {
     setQuery("")
-    setDateFrom("")
-    setDateTo("")
+    setPeriodFilter(defaultManagerPeriodFilter())
     setStatusFilter("all")
     setMethodFilter("all")
     setClassFilter("all")
+  }
+
+  function setPeriodPreset(preset: PeriodPreset) {
+    if (preset === "custom") {
+      setPeriodFilter((prev) => ({ ...prev, preset: "custom" }))
+      return
+    }
+    setPeriodFilter({ preset, customFrom: "", customTo: "" })
   }
 
   const validatePending = async (id: string) => {
@@ -446,30 +470,64 @@ export function PaymentsListPage({
 
           <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2">
             <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-3 sm:p-4">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <CalendarDays className="size-3.5 text-teal-600" />
-                {t("pay_list_period_pay")}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="flex shrink-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <CalendarDays className="size-3.5 text-teal-600" />
+                  {t("pay_list_period_pay")}
+                </div>
+                <PaymentPeriodSelect
+                  className="w-full min-w-0 sm:flex-1 sm:max-w-none"
+                  value={periodFilter.preset}
+                  onChange={setPeriodPreset}
+                />
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="space-y-1.5">
-                  <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_date_from")}</span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
-                  />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_date_to")}</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
-                  />
-                </label>
-              </div>
+              {periodActive ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {t("pay_list_period_scope")}{" "}
+                  <span className="font-semibold text-foreground">
+                    {paymentPeriodLabel(periodFilter.preset, t)}
+                  </span>
+                  {dateBounds.from && dateBounds.to ? (
+                    <span className="font-mono text-foreground/80">
+                      {" "}
+                      ({dateBounds.from} → {dateBounds.to})
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
+              {periodFilter.preset === "custom" ? (
+                <div className="space-y-2 rounded-xl border border-dashed border-border/80 bg-background/80 p-3">
+                  <p className="text-[11px] text-muted-foreground">{t("pay_list_period_custom_hint")}</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        {t("adm_learn_date_from")}
+                      </span>
+                      <input
+                        type="date"
+                        value={periodFilter.customFrom}
+                        onChange={(e) =>
+                          setPeriodFilter((prev) => ({ ...prev, customFrom: e.target.value }))
+                        }
+                        className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                      />
+                    </label>
+                    <label className="space-y-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        {t("adm_learn_date_to")}
+                      </span>
+                      <input
+                        type="date"
+                        value={periodFilter.customTo}
+                        onChange={(e) =>
+                          setPeriodFilter((prev) => ({ ...prev, customTo: e.target.value }))
+                        }
+                        className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ) : null}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input

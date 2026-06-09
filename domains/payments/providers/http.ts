@@ -29,6 +29,12 @@ function rethrowAsBusinessCode(error: unknown): never {
   throw error
 }
 
+function mapMethodToNeeroProvider(method: CreatePaymentInput["paymentMethod"]) {
+  if (method === "orange_money") return "ORANGE_MONEY"
+  if (method === "mtn_momo") return "MTN_MONEY"
+  return null
+}
+
 export const httpPaymentsProvider: PaymentsProvider = {
   async getSummary() {
     try {
@@ -46,6 +52,48 @@ export const httpPaymentsProvider: PaymentsProvider = {
   },
   async createPayment(input: CreatePaymentInput) {
     try {
+      const neeroBackendUrl = process.env.NEXT_PUBLIC_NEERO_BACKEND_URL
+      if (neeroBackendUrl) {
+        const provider = mapMethodToNeeroProvider(input.paymentMethod)
+        if (!provider) {
+          throw new Error("UNSUPPORTED_PAYMENT_METHOD")
+        }
+        if (!input.phoneNumber?.trim()) {
+          throw new Error("PHONE_REQUIRED")
+        }
+
+        const response = await fetch(`${neeroBackendUrl}/api/payments/learner`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: input.amount,
+            phoneNumber: input.phoneNumber.trim(),
+            provider,
+            countryIso: "CM",
+            currencyCode: input.currencyCode ?? "XAF",
+            confirm: true,
+          }),
+        })
+
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || !payload?.ok) {
+          const candidate = extractErrorCode(payload)
+          if (candidate) throw new Error(candidate)
+          throw new Error("NEERO_BACKEND_ERROR")
+        }
+
+        const intentId = payload?.transactionIntent?.id ?? payload?.transactionIntent?.transactionIntentId
+        return {
+          paymentId: intentId || `NEERO-${Date.now()}`,
+          amount: Number(input.amount),
+          currencyCode: input.currencyCode ?? "XAF",
+          paymentMethod: input.paymentMethod,
+          createdAt: new Date().toISOString(),
+          paidAt: new Date().toISOString(),
+          note: input.note,
+        } satisfies StudentPaymentRecord
+      }
+
       return await apiRequest<StudentPaymentRecord>("/payments", { method: "POST", body: input as any })
     } catch (error) {
       rethrowAsBusinessCode(error)

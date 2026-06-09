@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   ArrowUpRight,
@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
+import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { MobileBackButton } from "@/components/mobile-back-button"
 
 function classOverlapsDateRange(periodStart: string, periodEnd: string, dateFrom: string, dateTo: string) {
@@ -47,12 +48,7 @@ export default function AdminClassesPage() {
   const [statusFilter, setStatusFilter] = useState<AdminClassStatus | "all">("all")
   const [classFilter, setClassFilter] = useState<string>("all")
   const [showMoreFilters, setShowMoreFilters] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 450)
-    return () => clearTimeout(timer)
-  }, [])
+  const [loading] = useState(false)
 
   const filteredClasses = useMemo(() => {
     return adminClassesList.filter((cls) => {
@@ -208,21 +204,15 @@ export default function AdminClassesPage() {
               {showMoreFilters ? (
                 <label className="space-y-1.5">
                   <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_class")}</span>
-                  <div className="relative">
-                    <School className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <select
-                      value={classFilter}
-                      onChange={(e) => setClassFilter(e.target.value)}
-                      className="min-h-10 w-full appearance-none rounded-xl border border-input bg-background py-2 pr-8 pl-9 text-sm shadow-sm"
-                    >
-                      <option value="all">{t("adm_learn_opt_all_classes")}</option>
-                      {classesOptions.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <ClassSearchSelect
+                    value={classFilter}
+                    onValueChange={setClassFilter}
+                    options={classesOptions}
+                    allLabel={t("adm_learn_opt_all_classes")}
+                    searchPlaceholder={t("adm_class_search_placeholder")}
+                    emptyLabel={t("adm_class_search_empty")}
+                    moreResultsLabel={t("adm_class_search_more")}
+                  />
                 </label>
               ) : (
                 <div className="rounded-lg border border-dashed border-border/70 bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
@@ -349,6 +339,11 @@ export default function AdminClassesPage() {
                           .replace("{n}", String(cls.learnersCount))
                           .replace("{amount}", formatMoney(cls.tuitionAmount))}
                       </p>
+                      {cls.description?.trim() ? (
+                        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                          {cls.description}
+                        </p>
+                      ) : null}
                     </div>
                     <span
                       className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
