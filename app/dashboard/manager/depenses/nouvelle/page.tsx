@@ -1,13 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Paperclip, Sparkles } from "lucide-react"
-import {
-  MANAGER_EXPENSE_CATEGORIES,
-  ManagerWalletService,
-} from "@/domains/manager-wallet"
-import type { ManagerBudgetSummary, ManagerPaymentMethod } from "@/domains/manager-wallet/types"
+import { MANAGER_EXPENSE_CATEGORIES } from "@/domains/manager-wallet"
+import type { ManagerPaymentMethod } from "@/domains/manager-wallet/types"
 import { ManagerCategoryIcon } from "@/components/manager-category-icon"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { Button } from "@/components/ui/button"
@@ -17,14 +14,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/hooks/use-locale"
+import { useManagerWallet } from "@/hooks/use-manager-wallet"
 import { formatFcfa } from "@/lib/audit-date-range"
 import { cn } from "@/lib/utils"
-import type { ManagerExpenseRecord } from "@/domains/manager-wallet/types"
 
 export default function ManagerNouvelleDepensePage() {
   const { t } = useLocale()
-  const [summary, setSummary] = useState<ManagerBudgetSummary | null>(null)
-  const [recentExpenses, setRecentExpenses] = useState<ManagerExpenseRecord[]>([])
+  const { summary, expenses, createExpense, refresh } = useManagerWallet()
+  const recentExpenses = useMemo(() => expenses.slice(0, 5), [expenses])
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [amount, setAmount] = useState("")
   const [spentDate, setSpentDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -33,16 +30,6 @@ export default function ManagerNouvelleDepensePage() {
   const [file, setFile] = useState<File | null>(null)
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    const refresh = () => {
-      setSummary(ManagerWalletService.getSummary())
-      setRecentExpenses(ManagerWalletService.getExpenses().slice(0, 5))
-    }
-    refresh()
-    window.addEventListener("manager-wallet-updated", refresh)
-    return () => window.removeEventListener("manager-wallet-updated", refresh)
-  }, [])
 
   const selectedCat = useMemo(
     () => MANAGER_EXPENSE_CATEGORIES.find((c) => c.id === categoryId),
@@ -59,7 +46,7 @@ export default function ManagerNouvelleDepensePage() {
         return
       }
       const num = Number(amount)
-      await ManagerWalletService.createExpense({
+      await createExpense({
         categoryId: selectedCat.id,
         categoryLabel: t(selectedCat.labelKey),
         amount: num,
@@ -73,8 +60,7 @@ export default function ManagerNouvelleDepensePage() {
       setFile(null)
       setCategoryId(null)
       setMessage({ type: "ok", text: t("mgr_success") })
-      setSummary(ManagerWalletService.getSummary())
-      setRecentExpenses(ManagerWalletService.getExpenses().slice(0, 5))
+      refresh()
     } catch (e) {
       const code = e instanceof Error ? e.message : "UNKNOWN"
       if (code === "INSUFFICIENT_BALANCE") setMessage({ type: "err", text: t("mgr_err_insufficient") })

@@ -5,19 +5,18 @@ import type { AuthProvider } from "@/domains/auth/types"
 
 export const mockAuthProvider: AuthProvider = {
   async login(input) {
-    return AuthService.login(input.phone, input.pin)
+    return AuthService.login(input.email, input.password)
   },
-  async changePin(input) {
-    return AuthService.changePin(input.currentPin, input.newPin)
+  async getMe(current) {
+    return current
   },
-  async requestPinReset(phone) {
-    return AuthService.requestPinReset(phone)
+  async changePassword(input) {
+    return AuthService.changePassword(input.currentPassword, input.newPassword)
   },
-  async resetPinWithCode(input) {
-    return AuthService.resetPinWithCode(input.phone, input.tempPin, input.newPin)
+  async requestPasswordReset(email) {
+    return AuthService.requestPasswordReset(email)
   },
-  async requestManagerPinSms(phone) {
-    return AuthService.requestManagerPinSms(phone)
+  async resetPasswordWithCode(input) {
+    return AuthService.resetPasswordWithCode(input.email, input.tempPassword, input.newPassword)
   },
 }
-

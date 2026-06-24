@@ -39,21 +39,6 @@ interface NavSectionDef {
   items: NavItemDef[]
 }
 
-const studentSections: NavSectionDef[] = [
-  {
-    items: [
-      { labelKey: "nav_dashboard", icon: <LayoutDashboard className="size-4" />, href: "/dashboard" },
-      { labelKey: "nav_make_payment", icon: <CreditCard className="size-4" />, href: "/dashboard/effectuer-paiement" },
-      { labelKey: "nav_my_payments", icon: <Wallet className="size-4" />, href: "/dashboard/mes-paiements" },
-      { labelKey: "nav_claims", icon: <AlertCircle className="size-4" />, href: "/dashboard/reclamations" },
-      { labelKey: "nav_my_profile", icon: <User className="size-4" />, href: "/dashboard/mon-profil" },
-    ],
-  },
-  {
-    items: [{ labelKey: "nav_logout", icon: <LogOut className="size-4" />, isLogout: true }],
-  },
-]
-
 const managerSections: NavSectionDef[] = [
   {
     items: [{ labelKey: "nav_dashboard", icon: <LayoutDashboard className="size-4" />, href: "/dashboard" }],
@@ -136,7 +121,6 @@ const adminSections: NavSectionDef[] = [
 ]
 
 export function getDashboardNavSections(role: UserRole | null): NavSectionDef[] {
-  if (role === "student") return studentSections
   if (role === "manager") return managerSections
   if (role === "accountant") return accountantSections
   return adminSections
@@ -188,7 +172,8 @@ export function SidebarNav({
                           return
                         }
                         if (item.href) {
-                          startLoading()
+                          if (pathname === item.href) return
+                          startLoading(item.href)
                           router.push(item.href)
                         }
                       }}

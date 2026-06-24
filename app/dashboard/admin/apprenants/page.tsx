@@ -26,6 +26,7 @@ import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -37,8 +38,10 @@ import {
 } from "@/components/ui/table"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { getClassById, type AdminLearner } from "@/services/admin-mock.service"
-import { useAdminLearners } from "@/hooks/use-admin-learners"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
 import { useLocale } from "@/hooks/use-locale"
 type PaymentSituation = "all" | "solde_ok" | "en_retard"
 
@@ -50,9 +53,9 @@ function learnerCreatedInRange(createdAt: string, dateFrom: string, dateTo: stri
   return d >= lo && d <= hi
 }
 
-function paymentMatches(s: PaymentSituation, l: AdminLearner) {
+function paymentMatches(s: PaymentSituation, l: AdminLearner, dueAmount: number) {
   if (s === "all") return true
-  const remaining = l.due - l.paid
+  const remaining = dueAmount - l.paid
   if (s === "solde_ok") return remaining <= 0.01
   return remaining > 0.01
 }
@@ -62,8 +65,23 @@ export default function AdminApprenantsPage() {
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
-  const adminLearners = useAdminLearners()
-  const adminClasses = useAdminClasses()
+  const { learners: rawLearners, loading, error, refresh } = useAdminLearnersQuery()
+  const { classes: adminClasses } = useAdminClassesQuery()
+
+  // En mode API, le total deja paye n'est pas renvoye par /staff/users : on
+  // l'agrege depuis la source unique des paiements encaisses (success + manuel),
+  // partagee avec la page Classes pour garantir la coherence des chiffres.
+  const { paidByLearner } = useStaffPaidAggregates()
+
+  const adminLearners = useMemo(
+    () =>
+      isApiDataProvider()
+        ? rawLearners.map((l) => ({ ...l, paid: paidByLearner[l.id] ?? 0 }))
+        : rawLearners,
+    [rawLearners, paidByLearner],
+  )
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [query, setQuery] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
@@ -71,21 +89,36 @@ export default function AdminApprenantsPage() {
   const [classFilter, setClassFilter] = useState<string>("all")
   const [paymentSituation, setPaymentSituation] = useState<PaymentSituation>("all")
   const [showMoreFilters, setShowMoreFilters] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+
+  function resolveClassName(classId: string) {
+    const fromApi = adminClasses.find((c) => c.id === classId)?.name
+    if (fromApi) return fromApi
+    if (isApiDataProvider()) return ""
+    return getClassById(classId)?.name ?? ""
+  }
+
+  function learnerClassLabel(learner: AdminLearner & { className?: string }) {
+    return learner.className || resolveClassName(learner.classId) || learner.classId
+  }
+
+  function learnerDue(learner: AdminLearner) {
+    if (learner.due > 0) return learner.due
+    const cls = adminClasses.find((c) => c.id === learner.classId)
+    return cls?.tuitionAmount ?? 0
+  }
 
   const classOptions = useMemo(() => adminClasses.map((c) => ({ id: c.id, name: c.name })), [adminClasses])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return adminLearners.filter((l) => {
+      const dueAmount = learnerDue(l)
       if (!learnerCreatedInRange(l.createdAt, dateFrom, dateTo)) return false
       if (statusFilter !== "all" && l.status !== statusFilter) return false
       if (classFilter !== "all" && l.classId !== classFilter) return false
-      if (!paymentMatches(paymentSituation, l)) return false
+      if (!paymentMatches(paymentSituation, l, dueAmount)) return false
       if (!q) return true
-      const cls = getClassById(l.classId)?.name ?? ""
+      const cls = learnerClassLabel(l)
       return (
         l.fullName.toLowerCase().includes(q) ||
         l.phone.replace(/\s/g, "").includes(q) ||
@@ -93,7 +126,7 @@ export default function AdminApprenantsPage() {
         cls.toLowerCase().includes(q)
       )
     })
-  }, [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation])
+  }, [adminLearners, query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, adminClasses])
 
   const hasActiveFilters = useMemo(
     () =>
@@ -117,19 +150,20 @@ export default function AdminApprenantsPage() {
     let fullyPaid = 0
     let outstanding = 0
     for (const l of adminLearners) {
-      if (l.due - l.paid <= 0.01) fullyPaid += 1
+      const dueAmount = learnerDue(l)
+      if (dueAmount - l.paid <= 0.01) fullyPaid += 1
       else outstanding += 1
     }
     return { all: adminLearners.length, fullyPaid, outstanding }
-  }, [adminLearners])
+  }, [adminLearners, adminClasses])
 
   const totals = useMemo(() => {
-    const totalDue = filtered.reduce((s, l) => s + l.due, 0)
+    const totalDue = filtered.reduce((s, l) => s + learnerDue(l), 0)
     const totalPaid = filtered.reduce((s, l) => s + l.paid, 0)
     const remaining = Math.max(0, totalDue - totalPaid)
     const ratio = totalDue > 0 ? totalPaid / totalDue : 0
     return { totalDue, totalPaid, remaining, ratio, count: filtered.length }
-  }, [filtered])
+  }, [filtered, adminClasses])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const paged = useMemo(() => {
@@ -182,6 +216,19 @@ export default function AdminApprenantsPage() {
             </div>
           }
         />
+
+        {error ? (
+          <Alert variant="destructive" className="mt-5">
+            <AlertTitle>{t("adm_set_load_err")}</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-3">
+              <span>{error}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void refresh()}>
+                <RotateCcw className="mr-2 size-3.5" />
+                {t("adm_learn_reset")}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         {/* Filtres premium */}
         <div className="mt-5 overflow-hidden rounded-2xl border border-border/80 bg-card shadow-md">
@@ -384,7 +431,11 @@ export default function AdminApprenantsPage() {
                   <Wallet className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalDue)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-6 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalDue)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("adm_learn_kpi_tuition_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-emerald-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-emerald-600/55 via-cyan-500/45 to-sky-500/55" />
@@ -398,7 +449,11 @@ export default function AdminApprenantsPage() {
                   <Users className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalPaid)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-6 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalPaid)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">
                 {totals.totalDue > 0
                   ? `${Math.round(totals.ratio * 100)}% ${t("adm_learn_kpi_paid_hint2")}`
@@ -419,7 +474,11 @@ export default function AdminApprenantsPage() {
                   <Wallet className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.remaining)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-6 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.remaining)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("adm_learn_kpi_remain_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-amber-700/10">
                 <div
@@ -436,7 +495,11 @@ export default function AdminApprenantsPage() {
                   <GraduationCap className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{totals.count}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-6 w-16" />
+              ) : (
+                <p className="mt-2 text-[1.60rem] font-extrabold leading-none tabular-nums text-foreground">{totals.count}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("adm_learn_kpi_head_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-violet-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-violet-500/55 via-fuchsia-500/45 to-cyan-500/50" />
@@ -450,7 +513,7 @@ export default function AdminApprenantsPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead>{t("adm_learn_table_name")}</TableHead>
+                <TableHead className="w-[7.5rem] max-w-[7.5rem]">{t("adm_learn_table_name")}</TableHead>
                 <TableHead>{t("adm_learn_table_class")}</TableHead>
                 <TableHead>{t("adm_learn_table_phone")}</TableHead>
                 <TableHead>{t("adm_learn_table_status")}</TableHead>
@@ -486,18 +549,28 @@ export default function AdminApprenantsPage() {
               ) : null}
               {!loading &&
                 paged.map((l) => {
-                  const cls = getClassById(l.classId)
-                  const ratio = l.due > 0 ? Math.min(100, Math.round((l.paid / l.due) * 100)) : 100
-                  const reste = Math.max(0, l.due - l.paid)
+                  const dueAmount = learnerDue(l)
+                  const ratio = dueAmount > 0 ? Math.min(100, Math.round((l.paid / dueAmount) * 100)) : 100
+                  const reste = Math.max(0, dueAmount - l.paid)
                   return (
                     <TableRow key={l.id} className="group">
-                      <TableCell>
-                        <div>
-                          <p className="font-semibold text-foreground">{l.fullName}</p>
-                          <p className="font-mono text-[11px] text-muted-foreground">{l.id}</p>
+                      <TableCell className="w-[7.5rem] max-w-[7.5rem] whitespace-normal py-1.5">
+                        <div className="min-w-0">
+                          <p
+                            className="truncate text-[11px] font-medium leading-tight text-foreground"
+                            title={l.fullName}
+                          >
+                            {l.fullName}
+                          </p>
+                          <p
+                            className="truncate font-mono text-[9px] leading-tight text-muted-foreground"
+                            title={l.id}
+                          >
+                            {l.id}
+                          </p>
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{cls?.name ?? l.classId}</TableCell>
+                      <TableCell className="text-muted-foreground">{learnerClassLabel(l)}</TableCell>
                       <TableCell>
                         <span className="inline-flex items-center gap-1 text-sm">
                           <Phone className="size-3.5 text-muted-foreground" />
@@ -511,7 +584,7 @@ export default function AdminApprenantsPage() {
                           <Badge variant="secondary">{t("adm_st_suspended")}</Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{formatMoney(l.due)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatMoney(dueAmount)}</TableCell>
                       <TableCell className="text-right tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
                         {formatMoney(l.paid)}
                       </TableCell>
@@ -519,7 +592,7 @@ export default function AdminApprenantsPage() {
                         {reste <= 0.01 ? (
                           <span className="font-medium text-emerald-700 dark:text-emerald-400">{formatMoney(0)}</span>
                         ) : (
-                          <span className="font-semibold text-amber-800 dark:text-amber-300">{formatMoney(reste)}</span>
+                          <span className="font-semibold text-red-600 dark:text-red-400">{formatMoney(reste)}</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -557,18 +630,22 @@ export default function AdminApprenantsPage() {
             : null}
           {!loading &&
             paged.map((l) => {
-              const cls = getClassById(l.classId)
-              const ratio = l.due > 0 ? Math.min(100, Math.round((l.paid / l.due) * 100)) : 100
-              const reste = Math.max(0, l.due - l.paid)
+              const dueAmount = learnerDue(l)
+              const ratio = dueAmount > 0 ? Math.min(100, Math.round((l.paid / dueAmount) * 100)) : 100
+              const reste = Math.max(0, dueAmount - l.paid)
               return (
                 <div
                   key={l.id}
                   className="rounded-2xl border border-border/80 bg-gradient-to-b from-background to-muted/20 p-4 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold">{l.fullName}</p>
-                      <p className="font-mono text-[11px] text-muted-foreground">{l.id}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium" title={l.fullName}>
+                        {l.fullName}
+                      </p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground" title={l.id}>
+                        {l.id}
+                      </p>
                     </div>
                     {l.status === "active" ? (
                       <Badge className="bg-emerald-500/15 text-emerald-800">{t("adm_st_active")}</Badge>
@@ -576,7 +653,7 @@ export default function AdminApprenantsPage() {
                       <Badge variant="secondary">{t("adm_st_suspended")}</Badge>
                     )}
                   </div>
-                  <p className="mt-2 text-sm text-muted-foreground">{cls?.name ?? l.classId}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{learnerClassLabel(l)}</p>
                   <p className="mt-1 inline-flex items-center gap-1 text-sm">
                     <Phone className="size-3.5" />
                     {l.phone}
@@ -584,7 +661,7 @@ export default function AdminApprenantsPage() {
                   <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
                     <div>
                       <p className="text-[11px] text-muted-foreground">{t("adm_learn_table_due")}</p>
-                      <p className="font-semibold tabular-nums">{formatMoney(l.due)}</p>
+                      <p className="font-semibold tabular-nums">{formatMoney(dueAmount)}</p>
                     </div>
                     <div>
                       <p className="text-[11px] text-muted-foreground">{t("adm_learn_table_paid")}</p>
@@ -595,7 +672,7 @@ export default function AdminApprenantsPage() {
                       <p
                         className={cn(
                           "font-semibold tabular-nums",
-                          reste <= 0.01 ? "text-emerald-700" : "text-amber-800 dark:text-amber-300",
+                          reste <= 0.01 ? "text-emerald-700" : "text-red-600 dark:text-red-400",
                         )}
                       >
                         {formatMoney(reste <= 0.01 ? 0 : reste)}

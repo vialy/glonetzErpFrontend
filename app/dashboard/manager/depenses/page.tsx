@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Wallet } from "lucide-react"
-import { ManagerWalletService } from "@/domains/manager-wallet"
-import type { ManagerExpenseRecord, ManagerPaymentMethod } from "@/domains/manager-wallet/types"
+import { useManagerWallet } from "@/hooks/use-manager-wallet"
+import type { ManagerPaymentMethod } from "@/domains/manager-wallet/types"
 import { ManagerPeriodFilter } from "@/components/manager/manager-period-filter"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { useLocale } from "@/hooks/use-locale"
@@ -28,15 +28,8 @@ function payLabelExpense(m: ManagerPaymentMethod, t: (k: TranslationKey) => stri
 
 export default function ManagerDepensesListePage() {
   const { t } = useLocale()
-  const [expenses, setExpenses] = useState<ManagerExpenseRecord[]>([])
+  const { expenses } = useManagerWallet()
   const [period, setPeriod] = useState<ManagerPeriodFilterValue>(() => defaultManagerPeriodFilter())
-
-  useEffect(() => {
-    const refresh = () => setExpenses(ManagerWalletService.getExpenses())
-    refresh()
-    window.addEventListener("manager-wallet-updated", refresh)
-    return () => window.removeEventListener("manager-wallet-updated", refresh)
-  }, [])
 
   const range = useMemo(() => computePeriodRange(period), [period])
 

@@ -1,6 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import Link from "next/link"
 import {
   AlertCircle,
@@ -13,22 +12,15 @@ import {
   UserCircle2,
   Wallet,
 } from "lucide-react"
-import { ManagerWalletService } from "@/domains/manager-wallet"
-import type { ManagerBudgetSummary } from "@/domains/manager-wallet/types"
+import { useManagerWallet } from "@/hooks/use-manager-wallet"
 import { useLocale } from "@/hooks/use-locale"
 import { formatFcfa } from "@/lib/audit-date-range"
 import { cn } from "@/lib/utils"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export function ManagerDashboard() {
   const { t } = useLocale()
-  const [summary, setSummary] = useState<ManagerBudgetSummary | null>(null)
-
-  useEffect(() => {
-    const refresh = () => setSummary(ManagerWalletService.getSummary())
-    refresh()
-    window.addEventListener("manager-wallet-updated", refresh)
-    return () => window.removeEventListener("manager-wallet-updated", refresh)
-  }, [])
+  const { summary } = useManagerWallet()
 
   const spentPct =
     summary && summary.envelopeCeiling > 0
@@ -82,7 +74,16 @@ export function ManagerDashboard() {
             </p>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={`sk-${i}`} className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="mt-2 h-6 w-28" />
+            </div>
+          ))}
+        </div>
+      )}
 
       <nav className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label={t("nav_mgr_section")}>
         <MgrLink

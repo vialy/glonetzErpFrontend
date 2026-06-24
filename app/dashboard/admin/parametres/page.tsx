@@ -1,13 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { CreditCard, KeyRound, Loader2, Mail, Plus, Settings2, Trash2, User } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import {
   Select,
   SelectContent,
@@ -20,14 +18,14 @@ import { useLocale } from "@/hooks/use-locale"
 import { useAuth } from "@/hooks/use-auth"
 import { authService } from "@/domains/auth"
 import { settingsService, type PaymentGatewayId, type StaffSettings } from "@/domains/settings"
-import { canonicalAdminUserPhone } from "@/lib/admin-user-phone"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { getApiErrorMessage, isStaffPasswordStrong } from "@/lib/api-error"
 import { isValidNotificationEmail } from "@/lib/email-validation"
-import { getAdminUsers } from "@/services/admin-mock.service"
+import { StaffPasswordChangeSuccessPanel } from "@/components/staff/staff-password-change-success-panel"
+import { useStaffPasswordChangeRedirect } from "@/hooks/use-staff-password-change-redirect"
 
-const GATEWAYS: PaymentGatewayId[] = ["monero", "tranzak", "neero"]
-
-const pinSlotClass =
-  "size-11 rounded-xl border-2 border-border bg-background text-lg font-semibold shadow-sm transition-all data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20 sm:size-12"
+const MOCK_GATEWAYS: PaymentGatewayId[] = ["monero", "tranzak", "neero", "none"]
+const API_GATEWAYS: PaymentGatewayId[] = ["neero", "none"]
 
 function roleLabel(role: string, t: (k: import("@/services/i18n").TranslationKey) => string) {
   if (role === "admin") return t("adm_usr_role_admin")
@@ -39,7 +37,9 @@ function roleLabel(role: string, t: (k: import("@/services/i18n").TranslationKey
 
 export default function AdminSettingsPage() {
   const { t } = useLocale()
-  const { phone, role } = useAuth()
+  const { email, phone, role, fullName } = useAuth()
+  const { successVisible, secondsLeft, startRedirectCountdown } = useStaffPasswordChangeRedirect()
+  const gateways = isApiDataProvider() ? API_GATEWAYS : MOCK_GATEWAYS
 
   const [settings, setSettings] = useState<StaffSettings | null>(null)
   const [settingsLoading, setSettingsLoading] = useState(true)
@@ -48,17 +48,12 @@ export default function AdminSettingsPage() {
   const [newEmail, setNewEmail] = useState("")
   const [savingPlatform, setSavingPlatform] = useState(false)
 
-  const [currentPin, setCurrentPin] = useState("")
-  const [newPin, setNewPin] = useState("")
-  const [confirmPin, setConfirmPin] = useState("")
-  const [savingPin, setSavingPin] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [savingPassword, setSavingPassword] = useState(false)
 
-  const profileName = useMemo(() => {
-    if (!phone) return null
-    const key = canonicalAdminUserPhone(phone)
-    const match = getAdminUsers().find((u) => canonicalAdminUserPhone(u.phone) === key)
-    return match?.fullName ?? null
-  }, [phone])
+  const profileName = fullName ?? null
 
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true)
@@ -112,37 +107,44 @@ export default function AdminSettingsPage() {
     }
   }
 
-  async function savePin() {
-    if (currentPin.length !== 4 || newPin.length !== 4 || confirmPin.length !== 4) {
-      toast({ title: t("adm_set_pin_len"), variant: "destructive" })
-      return
-    }
-    if (newPin !== confirmPin) {
-      toast({ title: t("adm_set_pin_mismatch"), variant: "destructive" })
-      return
-    }
-    if (currentPin === newPin) {
-      toast({ title: t("adm_set_pin_same"), variant: "destructive" })
-      return
-    }
-    setSavingPin(true)
-    try {
-      await authService.changePin(currentPin, newPin)
-      setCurrentPin("")
-      setNewPin("")
-      setConfirmPin("")
+  async function savePassword() {
+    const minLen = isApiDataProvider() ? 8 : 6
+    if (currentPassword.length < minLen || newPassword.length < minLen || confirmPassword.length < minLen) {
       toast({
-        title: t("adm_set_pin_ok"),
-        description: t("adm_set_pin_ok_desc"),
+        title: isApiDataProvider() ? t("staff_password_policy") : t("staff_password_min"),
+        variant: "destructive",
       })
-    } catch {
-      toast({ title: t("adm_set_pin_fail"), variant: "destructive" })
+      return
+    }
+    if (isApiDataProvider() && !isStaffPasswordStrong(newPassword)) {
+      toast({ title: t("staff_password_policy"), variant: "destructive" })
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      toast({ title: t("staff_password_mismatch"), variant: "destructive" })
+      return
+    }
+    if (currentPassword === newPassword) {
+      toast({ title: t("staff_password_same"), variant: "destructive" })
+      return
+    }
+    setSavingPassword(true)
+    try {
+      await authService.changePassword(currentPassword, newPassword)
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+      startRedirectCountdown()
+    } catch (error) {
+      toast({
+        title: t("adm_set_pin_fail"),
+        description: getApiErrorMessage(error, t("staff_password_policy")),
+        variant: "destructive",
+      })
     } finally {
-      setSavingPin(false)
+      setSavingPassword(false)
     }
   }
-
-  const apiMode = (process.env.NEXT_PUBLIC_DATA_PROVIDER ?? "mock") === "api"
 
   return (
     <div className="px-4 pb-8 pt-4 md:px-6 lg:px-8">
@@ -151,15 +153,6 @@ export default function AdminSettingsPage() {
         subtitle={t("adm_set_subtitle")}
         gradientClassName="from-slate-600 to-indigo-700"
       />
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Badge variant="outline" className="text-xs">
-          {apiMode ? "API" : "Mock"} · GET/PATCH /api/staff/settings
-        </Badge>
-        <Badge variant="outline" className="text-xs">
-          POST /api/auth/change-pin
-        </Badge>
-      </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Mon compte */}
@@ -179,6 +172,10 @@ export default function AdminSettingsPage() {
               <dd className="font-medium">{profileName ?? "—"}</dd>
             </div>
             <div>
+              <dt className="text-muted-foreground">{t("staff_email_label")}</dt>
+              <dd className="font-medium">{email ?? "—"}</dd>
+            </div>
+            <div>
               <dt className="text-muted-foreground">{t("phone_label")}</dt>
               <dd className="font-mono text-xs">{phone ?? "—"}</dd>
             </div>
@@ -189,73 +186,48 @@ export default function AdminSettingsPage() {
           </dl>
         </section>
 
-        {/* Changement PIN */}
+        {/* Changement mot de passe */}
         <section className="rounded-xl border bg-card p-5 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="rounded-md bg-primary/10 p-2 text-primary">
               <KeyRound className="size-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold">{t("adm_set_pin_title")}</h2>
+              <h2 className="text-sm font-semibold">{t("staff_change_password_title")}</h2>
               <p className="text-xs text-muted-foreground">{t("adm_set_pin_desc")}</p>
             </div>
           </div>
           <div className="mt-4 space-y-4">
+            {successVisible ? (
+              <StaffPasswordChangeSuccessPanel secondsLeft={secondsLeft} />
+            ) : (
+              <>
             <div className="space-y-1.5">
-              <Label className="text-xs">{t("current_pin")}</Label>
-              <div className="flex justify-start">
-                <InputOTP maxLength={4} value={currentPin} onChange={setCurrentPin}>
-                  <InputOTPGroup className="gap-2">
-                    {[0, 1, 2, 3].map((i) => (
-                      <InputOTPSlot key={i} index={i} className={pinSlotClass} />
-                    ))}
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
+              <Label className="text-xs">{t("staff_current_password")}</Label>
+              <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">{t("new_pin")}</Label>
-              <div className="flex justify-start">
-                <InputOTP maxLength={4} value={newPin} onChange={setNewPin}>
-                  <InputOTPGroup className="gap-2">
-                    {[0, 1, 2, 3].map((i) => (
-                      <InputOTPSlot key={i} index={i} className={pinSlotClass} />
-                    ))}
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
+              <Label className="text-xs">{t("staff_new_password")}</Label>
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">{t("confirm_pin")}</Label>
-              <div className="flex justify-start">
-                <InputOTP maxLength={4} value={confirmPin} onChange={setConfirmPin}>
-                  <InputOTPGroup className="gap-2">
-                    {[0, 1, 2, 3].map((i) => (
-                      <InputOTPSlot
-                        key={i}
-                        index={i}
-                        className={`${pinSlotClass} ${
-                          confirmPin.length === 4 && confirmPin !== newPin
-                            ? "border-destructive"
-                            : confirmPin.length === 4 && confirmPin === newPin
-                              ? "border-emerald-500"
-                              : ""
-                        }`}
-                      />
-                    ))}
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
+              <Label className="text-xs">{t("staff_confirm_password")}</Label>
+              <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
             </div>
+            {isApiDataProvider() ? (
+              <p className="text-xs text-muted-foreground">{t("staff_password_policy")}</p>
+            ) : null}
             <Button
               type="button"
               className="w-full sm:w-auto"
-              disabled={savingPin}
-              onClick={() => void savePin()}
+              disabled={savingPassword}
+              onClick={() => void savePassword()}
             >
-              {savingPin ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-              {t("adm_set_pin_save")}
+              {savingPassword ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("staff_change_password_button")}
             </Button>
+              </>
+            )}
           </div>
         </section>
 
@@ -291,7 +263,7 @@ export default function AdminSettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {GATEWAYS.map((g) => (
+                    {gateways.map((g) => (
                       <SelectItem key={g} value={g}>
                         {g}
                       </SelectItem>

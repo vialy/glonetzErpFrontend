@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export function AdminKpiCard({
   label,
@@ -10,6 +11,7 @@ export function AdminKpiCard({
   tone = "default",
   featured = false,
   compact = false,
+  loading = false,
 }: {
   label: string
   value: string
@@ -18,6 +20,7 @@ export function AdminKpiCard({
   tone?: "default" | "success" | "warning" | "danger" | "violet"
   featured?: boolean
   compact?: boolean
+  loading?: boolean
 }) {
   const toneClass =
     tone === "success"
@@ -62,20 +65,24 @@ export function AdminKpiCard({
         <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</p>
         {icon ? <span className={`inline-flex rounded-xl p-1.5 ${iconToneClass}`}>{icon}</span> : null}
       </div>
-      <p
-        className={`mt-1.5 tabular-nums text-foreground transition-all duration-300 ${
-          featured
-            ? compact
-              ? "text-[1.4rem] font-extrabold"
-              : "text-[1.55rem] font-extrabold"
-            : compact
-              ? "text-[1.2rem] font-bold"
-              : "text-[1.35rem] font-bold"
-        } ${valuePulse ? "scale-[1.03] opacity-95" : "scale-100 opacity-100"}`}
-      >
-        {value}
-      </p>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      {loading ? (
+        <Skeleton className="mt-1.5 h-7 w-24" />
+      ) : (
+        <p
+          className={`mt-1.5 tabular-nums text-foreground transition-all duration-300 ${
+            featured
+              ? compact
+                ? "text-[1.4rem] font-extrabold"
+                : "text-[1.55rem] font-extrabold"
+              : compact
+                ? "text-[1.2rem] font-bold"
+                : "text-[1.35rem] font-bold"
+          } ${valuePulse ? "scale-[1.03] opacity-95" : "scale-100 opacity-100"}`}
+        >
+          {value}
+        </p>
+      )}
+      {hint && !loading ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   )
 }

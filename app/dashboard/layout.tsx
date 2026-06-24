@@ -20,29 +20,34 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
-  const { isAuthenticated, mustChangePin, logout, role, phone } = useAuth()
+  const { status, isAuthenticated, mustChangePin, logout, role, phone, email } = useAuth()
   const { t } = useLocale()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [ready, setReady] = useState(false)
   const guide = useGettingStartedGuide(role)
 
   useEffect(() => {
+    if (status === "loading") return
+
     if (!isAuthenticated) {
       router.replace("/login")
-    } else if (mustChangePin) {
-      router.replace("/login")
-    } else {
-      setReady(true)
+      return
     }
-  }, [isAuthenticated, mustChangePin, router])
+    if (role === "student") {
+      logout()
+      return
+    }
+    if (mustChangePin) {
+      router.replace("/login")
+    }
+  }, [status, isAuthenticated, mustChangePin, role, router, logout])
 
   const handleMenuToggle = useCallback(() => {
     setSidebarOpen((prev) => !prev)
   }, [])
 
-  if (!ready) {
+  if (status === "loading" || !isAuthenticated || mustChangePin || role === "student") {
     return (
       <div className="flex h-dvh items-center justify-center bg-background">
         <div className="size-10 animate-spin rounded-full border-4 border-muted border-t-primary" />
@@ -50,15 +55,15 @@ export default function DashboardLayout({
     )
   }
 
+  const profileLabel = email ?? phone ?? undefined
+
   return (
     <RouteLoaderProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
-        {/* Desktop sidebar */}
         <aside className="hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar lg:flex lg:flex-col h-full min-h-0 overflow-hidden">
           <SidebarNav onLogout={logout} role={role} />
         </aside>
 
-        {/* Mobile sidebar (sheet) */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-72 p-0 bg-sidebar">
             <SheetTitle className="sr-only">{t("nav_menu")}</SheetTitle>
@@ -66,12 +71,11 @@ export default function DashboardLayout({
           </SheetContent>
         </Sheet>
 
-        {/* Main area */}
         <div className="flex flex-1 flex-col overflow-hidden min-h-0">
           <TopBar
             onMenuToggle={handleMenuToggle}
             role={role}
-            phone={phone}
+            phone={profileLabel}
             onLogout={logout}
             guideCompleted={guide.completedCount}
             guideTotal={guide.total}

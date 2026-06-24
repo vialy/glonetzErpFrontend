@@ -1,6 +1,5 @@
 import { getDashboardNavSections } from "@/components/sidebar-nav"
 import { buildManagerScopedPayments } from "@/hooks/use-manager-payments"
-import { canonicalAdminUserPhone } from "@/lib/admin-user-phone"
 import { ClaimsService } from "@/services/claims.service"
 import {
   getAdminClasses,
@@ -8,6 +7,7 @@ import {
   getAdminPayments,
   getAdminUsers,
 } from "@/services/admin-mock.service"
+import type { StaffClass } from "@/domains/classes/types"
 import type { TranslationKey } from "@/services/i18n"
 import { ManagerLearnersService } from "@/services/manager-learners.service"
 import type { ClaimRecord, ClaimStatus } from "@/services/claims.service"
@@ -115,7 +115,6 @@ function pageItems(role: UserRole | null, t: GlobalSearchTranslate): GlobalSearc
     { role: "manager", key: "adm_learn_new", href: "/dashboard/manager/apprenants/nouveau" },
     { role: "manager", key: "adm_learn_import", href: "/dashboard/manager/apprenants/import" },
     { role: "manager", key: "mgr_nav_new", href: "/dashboard/manager/depenses/nouvelle" },
-    { role: "student", key: "sp_new_payment", href: "/dashboard/effectuer-paiement" },
   ]
 
   for (const extra of extras) {
@@ -135,9 +134,8 @@ function pageItems(role: UserRole | null, t: GlobalSearchTranslate): GlobalSearc
   return items
 }
 
-function adminLearnerItems(t: GlobalSearchTranslate): GlobalSearchItem[] {
-  const classes = getAdminClasses()
-  const classNameById = new Map(classes.map((c) => [c.id, c.name]))
+function adminLearnerItems(t: GlobalSearchTranslate, classes?: StaffClass[]): GlobalSearchItem[] {
+  const classNameById = new Map((classes ?? getAdminClasses()).map((c) => [c.id, c.name]))
 
   return getAdminLearners().map((learner) => {
     const className = classNameById.get(learner.classId) ?? ""
@@ -171,8 +169,8 @@ function managerLearnerItems(): GlobalSearchItem[] {
   }))
 }
 
-function adminClassItems(): GlobalSearchItem[] {
-  return getAdminClasses().map((cls) => ({
+function adminClassItems(classes?: StaffClass[]): GlobalSearchItem[] {
+  return (classes ?? getAdminClasses()).map((cls) => ({
     id: `class:${cls.id}`,
     group: "classes" as const,
     title: cls.name,
@@ -260,26 +258,19 @@ function adminUserItems(t: GlobalSearchTranslate): GlobalSearchItem[] {
     }))
 }
 
-function filterStudentClaims(claims: ClaimRecord[], phone: string | null | undefined): ClaimRecord[] {
-  if (!phone?.trim()) return claims
-  const key = canonicalAdminUserPhone(phone)
-  if (!key) return claims
-  return claims.filter((c) => canonicalAdminUserPhone(c.phoneNumber) === key)
-}
-
-/** Construit l'index de recherche pour le role connecte (donnees mock / localStorage). */
+/** Construit l'index de recherche pour le role connecte. */
 export function buildGlobalSearchIndex(
   role: UserRole | null,
   t: GlobalSearchTranslate,
-  options?: { phone?: string | null },
+  options?: { phone?: string | null; classes?: StaffClass[] },
 ): GlobalSearchItem[] {
   if (!role) return []
 
   const items: GlobalSearchItem[] = [...pageItems(role, t)]
 
   if (role === "admin") {
-    items.push(...adminLearnerItems(t))
-    items.push(...adminClassItems())
+    items.push(...adminLearnerItems(t, options?.classes))
+    items.push(...adminClassItems(options?.classes))
     items.push(
       ...paymentItems(
         getAdminPayments(),
@@ -305,11 +296,6 @@ export function buildGlobalSearchIndex(
 
   if (role === "accountant") {
     items.push(...claimItems(ClaimsService.getAll(), "/dashboard/comptable/reclamations", t))
-  }
-
-  if (role === "student") {
-    const claims = filterStudentClaims(ClaimsService.getAll(), options?.phone)
-    items.push(...claimItems(claims, "/dashboard/reclamations", t))
   }
 
   return items

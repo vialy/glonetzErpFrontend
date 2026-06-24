@@ -24,16 +24,6 @@ interface MobileItem {
 }
 
 function itemsByRole(role: UserRole | null): MobileItem[] {
-  if (role === "student") {
-    return [
-      { labelKey: "mob_stu_dash", href: "/dashboard", icon: <Home className="size-4" /> },
-      { labelKey: "mob_stu_pay", href: "/dashboard/effectuer-paiement", icon: <CreditCard className="size-4" /> },
-      { labelKey: "mob_stu_payments", href: "/dashboard/mes-paiements", icon: <Wallet className="size-4" /> },
-      { labelKey: "mob_stu_claims", href: "/dashboard/reclamations", icon: <AlertCircle className="size-4" /> },
-      { labelKey: "mob_stu_profile", href: "/dashboard/mon-profil", icon: <User className="size-4" /> },
-    ]
-  }
-
   if (role === "manager") {
     return [
       { labelKey: "mob_mgr_home", href: "/dashboard", icon: <Home className="size-4" /> },
@@ -64,7 +54,7 @@ function itemsByRole(role: UserRole | null): MobileItem[] {
     ]
   }
 
-  return [{ labelKey: "mob_stu_dash", href: "/dashboard", icon: <Home className="size-4" /> }]
+  return [{ labelKey: "mob_adm_dash", href: "/dashboard", icon: <Home className="size-4" /> }]
 }
 
 export function MobileBottomNav({ role }: { role: UserRole | null }) {
@@ -93,7 +83,8 @@ export function MobileBottomNav({ role }: { role: UserRole | null }) {
               key={item.href}
               type="button"
               onClick={() => {
-                startLoading()
+                if (pathname === item.href) return
+                startLoading(item.href)
                 router.push(item.href)
               }}
               className={cn(

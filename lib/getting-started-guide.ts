@@ -118,39 +118,6 @@ const MANAGER_STEPS: GuideStep[] = [
   },
 ]
 
-const STUDENT_STEPS: GuideStep[] = [
-  {
-    id: "stu_dashboard",
-    href: "/dashboard",
-    titleKey: "guide_stu_dash_title",
-    descriptionKey: "guide_stu_dash_desc",
-  },
-  {
-    id: "stu_pay",
-    href: "/dashboard/effectuer-paiement",
-    titleKey: "guide_stu_pay_title",
-    descriptionKey: "guide_stu_pay_desc",
-  },
-  {
-    id: "stu_payments",
-    href: "/dashboard/mes-paiements",
-    titleKey: "guide_stu_payments_title",
-    descriptionKey: "guide_stu_payments_desc",
-  },
-  {
-    id: "stu_claims",
-    href: "/dashboard/reclamations",
-    titleKey: "guide_stu_claims_title",
-    descriptionKey: "guide_stu_claims_desc",
-  },
-  {
-    id: "stu_profile",
-    href: "/dashboard/mon-profil",
-    titleKey: "guide_stu_profile_title",
-    descriptionKey: "guide_stu_profile_desc",
-  },
-]
-
 const ACCOUNTANT_STEPS: GuideStep[] = [
   {
     id: "acc_dashboard",
@@ -185,7 +152,6 @@ const ACCOUNTANT_STEPS: GuideStep[] = [
 ]
 
 export function getGuideStepsForRole(role: UserRole | null): GuideStep[] {
-  if (role === "student") return STUDENT_STEPS
   if (role === "manager") return MANAGER_STEPS
   if (role === "accountant") return ACCOUNTANT_STEPS
   return ADMIN_STEPS

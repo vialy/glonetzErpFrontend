@@ -10,6 +10,7 @@ import { MobileBackButton } from "@/components/mobile-back-button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 function formatWhen(iso: string) {
@@ -36,11 +37,13 @@ export default function ComptableFluxPage() {
   const [payments, setPayments] = useState<AuditPaymentReceived[]>([])
   const [manager, setManager] = useState<AuditManagerExpense[]>([])
   const [extra, setExtra] = useState<AuditExtraordinaryExpense[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setPayments(accountingAuditService.getPaymentsInRange(range))
     setManager(accountingAuditService.getManagerExpensesInRange(range))
     setExtra(accountingAuditService.getExtraordinaryInRange(range))
+    setLoading(false)
   }, [range])
 
   return (
@@ -85,7 +88,9 @@ export default function ComptableFluxPage() {
         </TabsList>
 
         <TabsContent value="in" className="mt-0 outline-none">
-          {payments.length === 0 ? (
+          {loading ? (
+            <FluxSkeleton />
+          ) : payments.length === 0 ? (
             <Empty t={t} />
           ) : (
             <ul className="space-y-3">
@@ -125,7 +130,9 @@ export default function ComptableFluxPage() {
         </TabsContent>
 
         <TabsContent value="mgr" className="mt-0 outline-none">
-          {manager.length === 0 ? (
+          {loading ? (
+            <FluxSkeleton />
+          ) : manager.length === 0 ? (
             <Empty t={t} />
           ) : (
             <ul className="space-y-3">
@@ -158,7 +165,9 @@ export default function ComptableFluxPage() {
         </TabsContent>
 
         <TabsContent value="ext" className="mt-0 outline-none">
-          {extra.length === 0 ? (
+          {loading ? (
+            <FluxSkeleton />
+          ) : extra.length === 0 ? (
             <Empty t={t} />
           ) : (
             <ul className="space-y-3">
@@ -182,6 +191,18 @@ export default function ComptableFluxPage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+function FluxSkeleton() {
+  return (
+    <ul className="space-y-3">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <li key={`sk-${i}`}>
+          <Skeleton className="h-28 w-full rounded-2xl" />
+        </li>
+      ))}
+    </ul>
   )
 }
 

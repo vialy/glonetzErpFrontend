@@ -1,18 +1,28 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState } from "react"
-import { AlertTriangle, ArrowRight, Building2, CalendarDays, CreditCard, GraduationCap, TrendingUp, Users, Wallet } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { ArrowRight, Building2, CalendarDays, GraduationCap, Users, Wallet } from "lucide-react"
 import { LazyAreaChart } from "@/components/charts/lazy-area-chart"
 import { adminExpenses, formatFcfa } from "@/services/admin-mock.service"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
-import { useAdminPayments } from "@/hooks/use-admin-payments"
-import { useAdminLearners } from "@/hooks/use-admin-learners"
+import { enrichClassesWithLearnerStats } from "@/domains/classes/enrich-classes"
+import { classesService, type StaffClassStats } from "@/domains/classes"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { getCached, hasCached, setCached } from "@/lib/client-cache"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useAdminPaymentsQuery } from "@/hooks/use-admin-payments"
+import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
+import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { AdminKpiCard } from "@/components/admin/admin-kpi-card"
+import { AdminKpiTile } from "@/components/admin/admin-kpi-tile"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useLocale } from "@/hooks/use-locale"
 import { computePeriodRange, isIsoDateInPeriod } from "@/lib/manager-period-range"
 import { defaultManagerPeriodFilter } from "@/lib/manager-period-range"
+
+function fcfaNumber(value: number): string {
+  return new Intl.NumberFormat("fr-FR").format(value)
+}
 
 type PeriodId =
   | "today"
@@ -29,9 +39,86 @@ type PeriodId =
 export function TreasuryContent() {
   const { t } = useLocale()
   const [period, setPeriod] = useState<PeriodId>("last_30")
-  const adminPayments = useAdminPayments()
-  const adminLearners = useAdminLearners()
-  const adminClasses = useAdminClasses()
+  const { payments: adminPayments, loading: paymentsLoading } = useAdminPaymentsQuery()
+  const { learners: adminLearners, loading: learnersLoading } = useAdminLearnersQuery()
+  const { classes: adminClasses, loading: classesLoading } = useAdminClassesQuery()
+  // Encaisse par classe : meme source que la page Classes/Apprenants (paiements reels).
+  const { paidByClass } = useStaffPaidAggregates()
+
+  // Rollup financier par classe calcule cote serveur (GET /staff/classes/:id/details) :
+  // du / encaisse / reste / effectif / retards. Un appel par classe, en parallele.
+  const [statsByClass, setStatsByClass] = useState<Record<string, StaffClassStats>>({})
+  const [statsLoading, setStatsLoading] = useState(isApiDataProvider())
+  const classIdsKey = useMemo(() => adminClasses.map((c) => c.id).join(","), [adminClasses])
+
+  useEffect(() => {
+    if (!isApiDataProvider()) return
+    const ids = classIdsKey ? classIdsKey.split(",").filter(Boolean) : []
+    if (ids.length === 0) {
+      setStatsByClass({})
+      setStatsLoading(false)
+      return
+    }
+    let cancelled = false
+    // Affichage instantane depuis le cache, puis revalidation en arriere-plan.
+    const seeded: Record<string, StaffClassStats> = {}
+    for (const id of ids) {
+      const c = getCached<StaffClassStats>(`class-stats:${id}`)
+      if (c) seeded[id] = c
+    }
+    if (Object.keys(seeded).length > 0) setStatsByClass((prev) => ({ ...prev, ...seeded }))
+    setStatsLoading(!ids.every((id) => hasCached(`class-stats:${id}`)))
+    const load = () => {
+      Promise.all(
+        ids.map((id) =>
+          classesService
+            .getDetails(id)
+            .then((details) => [id, details?.stats ?? null] as const)
+            .catch(() => [id, null] as const),
+        ),
+      ).then((entries) => {
+        if (cancelled) return
+        const map: Record<string, StaffClassStats> = {}
+        for (const [id, stats] of entries) {
+          if (stats) {
+            map[id] = stats
+            setCached(`class-stats:${id}`, stats)
+          }
+        }
+        setStatsByClass(map)
+        setStatsLoading(false)
+      })
+    }
+    load()
+    window.addEventListener("admin-payments-updated", load)
+    return () => {
+      cancelled = true
+      window.removeEventListener("admin-payments-updated", load)
+    }
+  }, [classIdsKey])
+
+  // Chargement global du dashboard (mode API uniquement ; mock = synchrone).
+  const loading =
+    isApiDataProvider() && (paymentsLoading || learnersLoading || classesLoading || statsLoading)
+
+  // Classes enrichies : en mode API on prend le rollup serveur (source autoritaire),
+  // avec repli sur l'enrichissement local si /details indisponible pour une classe.
+  const enrichedClasses = useMemo(() => {
+    const enriched = enrichClassesWithLearnerStats(adminClasses, adminLearners)
+    if (!isApiDataProvider()) return enriched
+    return enriched.map((c) => {
+      const stats = statsByClass[c.id]
+      // Encaisse : somme des paiements reels de la classe (source unique partagee).
+      const totalPaid = paidByClass[c.id] ?? 0
+      if (!stats) return { ...c, totalPaid }
+      return {
+        ...c,
+        learnersCount: stats.studentCount || c.learnersCount,
+        totalDue: stats.totalExpected,
+        totalPaid,
+      }
+    })
+  }, [adminClasses, adminLearners, statsByClass, paidByClass])
 
   const dateRange = useMemo(() => {
     // Filtre admin : préréglages uniquement (pas de "custom" ici).
@@ -75,8 +162,17 @@ export function TreasuryContent() {
     })
   }, [adminClasses, dateRange])
 
-  const totalDue = useMemo(() => filteredClasses.reduce((sum, item) => sum + item.totalDue, 0), [filteredClasses])
-  const totalPaid = useMemo(() => filteredClasses.reduce((sum, item) => sum + item.totalPaid, 0), [filteredClasses])
+  // Du global (snapshot, independant de la periode) — somme du attendu de toutes les classes.
+  const totalDue = useMemo(() => enrichedClasses.reduce((sum, c) => sum + c.totalDue, 0), [enrichedClasses])
+  // Encaisse de la periode selectionnee — base sur les paiements reels (dates).
+  const totalPaid = useMemo(() => {
+    if (isApiDataProvider()) {
+      return adminPayments
+        .filter((p) => (p.status === "success" || p.status === "manual") && inRange(p.createdAt))
+        .reduce((sum, p) => sum + p.amount, 0)
+    }
+    return enrichedClasses.reduce((sum, c) => sum + c.totalPaid, 0)
+  }, [enrichedClasses, adminPayments, inRange])
 
   const filteredManagerExpenses = useMemo(
     () => adminExpenses.filter((e) => e.type === "manager" && inRange(e.createdAt)),
@@ -95,15 +191,50 @@ export function TreasuryContent() {
     () => adminPayments.filter((p) => p.status !== "success" && inRange(p.createdAt)).length,
     [adminPayments, inRange]
   )
-  const overdueLearners = useMemo(
-    () => adminLearners.filter((l) => l.paid < l.due && inRange(l.createdAt)).map((l) => l.id),
-    [adminLearners, inRange]
-  )
+  // En retard = apprenants non entierement payes (etat instantane, pas filtre par periode).
+  // En mode API : somme serveur (unpaid + partiellement paye) issue de /details.
+  const overdueCount = useMemo(() => {
+    if (isApiDataProvider()) {
+      return Object.values(statsByClass).reduce(
+        (sum, s) => sum + s.unpaidCount + s.partiallyPaidCount,
+        0,
+      )
+    }
+    return adminLearners.filter((l) => l.due > 0 && l.paid < l.due).length
+  }, [statsByClass, adminLearners])
 
-  const paidPct = totalDue > 0 ? Math.round((totalPaid / totalDue) * 100) : 0
-  const paidHint =
-    totalDue > 0 ? `${paidPct}% ${t("adm_treasury_kpi_paid_hint")}` : "—"
-  const chargesHint = `${t("adm_treasury_kpi_charges_hint")} ${formatFcfa(managerOut)} + ${t("adm_treasury_kpi_extra")} ${formatFcfa(extraOut)}`
+  const prevDateRange = useMemo(() => {
+    if (!dateRange) return null
+    const length = dateRange.end.getTime() - dateRange.start.getTime()
+    const end = new Date(dateRange.start.getTime() - 1)
+    const start = new Date(end.getTime() - length)
+    return { start, end }
+  }, [dateRange])
+
+  const previousMetrics = useMemo(() => {
+    const inPrevRange = (iso: string) =>
+      prevDateRange ? isIsoDateInPeriod(iso.slice(0, 10), prevDateRange) : false
+    // Du = snapshot (meme reference que la periode courante).
+    const due = enrichedClasses.reduce((sum, c) => sum + c.totalDue, 0)
+    const paid = isApiDataProvider()
+      ? adminPayments
+          .filter((p) => (p.status === "success" || p.status === "manual") && inPrevRange(p.createdAt))
+          .reduce((sum, p) => sum + p.amount, 0)
+      : enrichedClasses.reduce((sum, c) => sum + c.totalPaid, 0)
+    const mOut = adminExpenses
+      .filter((e) => e.type === "manager" && inPrevRange(e.createdAt))
+      .reduce((sum, e) => sum + e.amount, 0)
+    const eOut = adminExpenses
+      .filter((e) => e.type === "extra" && inPrevRange(e.createdAt))
+      .reduce((sum, e) => sum + e.amount, 0)
+    const charges = mOut + eOut
+    return { due, paid, charges, net: paid - charges }
+  }, [enrichedClasses, adminPayments, prevDateRange])
+
+  function deltaPct(current: number, previous: number): number | null {
+    if (previous === 0) return null
+    return ((current - previous) / Math.abs(previous)) * 100
+  }
 
   const trendData = useMemo(() => {
     if (filteredClasses.length === 0) return []
@@ -119,6 +250,18 @@ export function TreasuryContent() {
       return { label: labels[idx]!, in: inSum, out }
     })
   }, [filteredClasses, managerOut, extraOut])
+
+  const kpiSeries = useMemo(() => {
+    const inSeries = trendData.map((d) => d.in)
+    const outSeries = trendData.map((d) => d.out)
+    const netSeries = trendData.map((d) => d.in - d.out)
+    let running = 0
+    const dueSeries = inSeries.map((value) => {
+      running += value
+      return running
+    })
+    return { due: dueSeries, in: inSeries, charges: outSeries, net: netSeries }
+  }, [trendData])
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -153,39 +296,60 @@ export function TreasuryContent() {
           }
         />
 
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <AdminKpiCard
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <AdminKpiTile
+            categoryLabel={t("adm_treasury_tile_cat_due")}
+            categoryHref="/dashboard/admin/classes"
             label={t("adm_treasury_kpi_due")}
-            value={formatFcfa(totalDue)}
-            icon={<Wallet className="size-4" />}
+            value={fcfaNumber(totalDue)}
+            unit="FCFA"
+            deltaPct={deltaPct(totalDue, previousMetrics.due)}
+            periodLabel={periodLabel}
+            series={kpiSeries.due}
             tone="violet"
-            featured
+            loading={loading}
           />
-          <AdminKpiCard
+          <AdminKpiTile
+            categoryLabel={t("adm_treasury_tile_cat_in")}
+            categoryHref="/dashboard/admin/paiements"
             label={t("adm_treasury_kpi_in")}
-            value={formatFcfa(totalPaid)}
-            hint={paidHint}
-            icon={<TrendingUp className="size-4" />}
-            tone="success"
+            value={fcfaNumber(totalPaid)}
+            unit="FCFA"
+            deltaPct={deltaPct(totalPaid, previousMetrics.paid)}
+            periodLabel={periodLabel}
+            series={kpiSeries.in}
+            tone="sky"
+            loading={loading}
           />
-          <AdminKpiCard
+          <AdminKpiTile
+            categoryLabel={t("adm_treasury_tile_cat_charges")}
+            categoryHref="/dashboard/admin/finances"
             label={t("adm_treasury_kpi_charges")}
-            value={formatFcfa(managerOut + extraOut)}
-            hint={chargesHint}
-            icon={<CreditCard className="size-4" />}
-            tone="warning"
+            value={fcfaNumber(managerOut + extraOut)}
+            unit="FCFA"
+            deltaPct={deltaPct(managerOut + extraOut, previousMetrics.charges)}
+            periodLabel={periodLabel}
+            series={kpiSeries.charges}
+            tone="amber"
+            invertDelta
+            loading={loading}
           />
-          <AdminKpiCard
+          <AdminKpiTile
+            categoryLabel={t("adm_treasury_tile_cat_net")}
+            categoryHref="/dashboard/admin/rapports"
             label={t("adm_treasury_kpi_net")}
-            value={formatFcfa(net)}
-            icon={<AlertTriangle className="size-4" />}
-            tone={net < 0 ? "danger" : "violet"}
-            featured={net >= 0}
+            value={fcfaNumber(net)}
+            unit="FCFA"
+            deltaPct={deltaPct(net, previousMetrics.net)}
+            periodLabel={periodLabel}
+            series={kpiSeries.net}
+            tone={net < 0 ? "rose" : "emerald"}
+            loading={loading}
           />
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm xl:col-span-2">
+        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm lg:col-span-2">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-base font-semibold tracking-tight">{t("adm_treasury_chart_title")} ({periodLabel})</h3>
               <span className="text-xs text-muted-foreground">{t("adm_treasury_chart_sub")}</span>
@@ -201,19 +365,27 @@ export function TreasuryContent() {
               </div>
             </div>
             <div className="h-64 w-full">
-              <LazyAreaChart
-                data={trendData}
-                formatValue={formatFcfa}
-                inLabel={t("adm_treasury_kpi_in")}
-                outLabel={t("adm_treasury_kpi_charges")}
-              />
+              {loading ? (
+                <Skeleton className="h-full w-full rounded-xl" />
+              ) : (
+                <LazyAreaChart
+                  data={trendData}
+                  formatValue={formatFcfa}
+                  inLabel={t("adm_treasury_kpi_in")}
+                  outLabel={t("adm_treasury_kpi_charges")}
+                />
+              )}
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
               <p className="text-xs font-semibold text-muted-foreground">{t("adm_treasury_claims_wait")}</p>
-              <p className="mt-2 text-2xl font-bold tabular-nums">{pendingClaims}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-12" />
+              ) : (
+                <p className="mt-2 text-2xl font-bold tabular-nums">{pendingClaims}</p>
+              )}
               <Link
                 href="/dashboard/reclamations-validation"
                 className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary transition hover:opacity-90"
@@ -223,7 +395,11 @@ export function TreasuryContent() {
             </div>
             <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
               <p className="text-xs font-semibold text-muted-foreground">{t("adm_treasury_overdue")}</p>
-              <p className="mt-2 text-2xl font-bold tabular-nums">{overdueLearners.length}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-12" />
+              ) : (
+                <p className="mt-2 text-2xl font-bold tabular-nums">{overdueCount}</p>
+              )}
               <Link
                 href="/dashboard/admin/apprenants"
                 className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary transition hover:opacity-90"
@@ -234,8 +410,8 @@ export function TreasuryContent() {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm xl:col-span-2">
+        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm lg:col-span-2">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-base font-semibold tracking-tight">{t("adm_treasury_class_title")}</h3>
               <Link href="/dashboard/admin/classes" className="text-xs font-semibold text-primary transition hover:opacity-90">
@@ -254,9 +430,22 @@ export function TreasuryContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {adminClasses.map((cls) => {
+                  {loading
+                    ? Array.from({ length: 4 }).map((_, i) => (
+                        <tr key={`sk-${i}`} className="border-t">
+                          {Array.from({ length: 5 }).map((__, j) => (
+                            <td key={j} className="px-3 py-2">
+                              <Skeleton className="h-4 w-full" />
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    : enrichedClasses.map((cls) => {
                     const rest = cls.totalDue - cls.totalPaid
-                    const ratio = cls.totalDue > 0 ? Math.round((cls.totalPaid / cls.totalDue) * 100) : 0
+                    const ratio =
+                      cls.totalPaid > 0 && cls.totalDue > 0
+                        ? Math.max(1, Math.round((cls.totalPaid / cls.totalDue) * 100))
+                        : 0
                     return (
                       <tr key={cls.id} className="border-t">
                         <td className="px-3 py-2 font-medium">{cls.name}</td>

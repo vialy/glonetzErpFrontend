@@ -9,30 +9,34 @@ import { useLocale } from "@/hooks/use-locale"
 
 export default function LoginPage() {
   const router = useRouter()
-  const { isAuthenticated, mustChangePin } = useAuth()
+  const { status, isAuthenticated, mustChangePin, role } = useAuth()
   const { t } = useLocale()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
+    if (status === "loading") return
+
+    if (isAuthenticated && role === "student") {
+      setReady(true)
+      return
+    }
     if (isAuthenticated && !mustChangePin) {
       router.replace("/dashboard")
-    } else {
-      setReady(true)
+      return
     }
-  }, [isAuthenticated, mustChangePin, router])
+    setReady(true)
+  }, [status, isAuthenticated, mustChangePin, role, router])
 
-  if (!ready) return null
+  if (status === "loading" || !ready) return null
 
   return (
     <div className="flex min-h-dvh overflow-hidden lg:h-dvh">
-      {/* Left - Login form */}
       <div className="relative w-full bg-gradient-to-br from-secondary via-card to-accent/20 lg:w-1/2 lg:bg-none lg:bg-card">
         <Suspense fallback={null}>
           <LoginForm />
         </Suspense>
       </div>
 
-      {/* Right - Hero image (hidden on mobile) */}
       <div className="relative hidden lg:block lg:w-1/2">
         <Image
           src="/images/login-hero.jpg"

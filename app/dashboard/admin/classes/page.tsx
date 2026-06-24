@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   ArrowUpRight,
@@ -20,10 +20,17 @@ import {
 } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { type AdminClassStatus } from "@/services/admin-mock.service"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
+import { classesService, type StaffClassStats } from "@/domains/classes"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { getCached, setCached } from "@/lib/client-cache"
+import { enrichClassesWithLearnerStats } from "@/domains/classes/enrich-classes"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
+import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
 import { useLocale } from "@/hooks/use-locale"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
 import { ClassSearchSelect } from "@/components/admin/class-search-select"
@@ -41,23 +48,93 @@ export default function AdminClassesPage() {
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
-  const adminClassesList = useAdminClasses()
-  const classesOptions = useMemo(() => adminClassesList.map((c) => ({ id: c.id, name: c.name })), [adminClassesList])
+  const { classes: adminClassesList, loading, error, refresh } = useAdminClassesQuery()
+  const { learners: adminLearners } = useAdminLearnersQuery()
+  // Encaisse par classe : source unique = paiements reels (GET /staff/payments),
+  // identique a l'agregation par apprenant => chiffres coherents partout.
+  const { paidByClass } = useStaffPaidAggregates()
+
+  // En mode API, le rollup financier (du/encaisse/reste) est calcule cote serveur
+  // par GET /staff/classes/:id/details : on l'appelle pour chaque classe en parallele.
+  const [statsByClass, setStatsByClass] = useState<Record<string, StaffClassStats>>({})
+  const classIdsKey = useMemo(() => adminClassesList.map((c) => c.id).join(","), [adminClassesList])
+
+  useEffect(() => {
+    if (!isApiDataProvider()) return
+    const ids = classIdsKey ? classIdsKey.split(",").filter(Boolean) : []
+    if (ids.length === 0) {
+      setStatsByClass({})
+      return
+    }
+    let cancelled = false
+    // Affichage instantane depuis le cache, puis revalidation en arriere-plan.
+    const seeded: Record<string, StaffClassStats> = {}
+    for (const id of ids) {
+      const c = getCached<StaffClassStats>(`class-stats:${id}`)
+      if (c) seeded[id] = c
+    }
+    if (Object.keys(seeded).length > 0) setStatsByClass((prev) => ({ ...prev, ...seeded }))
+    const load = () => {
+      Promise.all(
+        ids.map((id) =>
+          classesService
+            .getDetails(id)
+            .then((details) => [id, details?.stats ?? null] as const)
+            .catch(() => [id, null] as const),
+        ),
+      ).then((entries) => {
+        if (cancelled) return
+        const map: Record<string, StaffClassStats> = {}
+        for (const [id, stats] of entries) {
+          if (stats) {
+            map[id] = stats
+            setCached(`class-stats:${id}`, stats)
+          }
+        }
+        setStatsByClass(map)
+      })
+    }
+    load()
+    window.addEventListener("admin-payments-updated", load)
+    return () => {
+      cancelled = true
+      window.removeEventListener("admin-payments-updated", load)
+    }
+  }, [classIdsKey])
+
+  const classesWithStats = useMemo(() => {
+    const enriched = enrichClassesWithLearnerStats(adminClassesList, adminLearners)
+    if (!isApiDataProvider()) return enriched
+    // Du / effectif : rollup serveur (/details) quand disponible.
+    // Encaisse : toujours la somme des paiements reels de la classe (source unique),
+    // pour rester coherent avec le "total paye" des apprenants.
+    return enriched.map((c) => {
+      const stats = statsByClass[c.id]
+      const totalPaid = paidByClass[c.id] ?? 0
+      if (!stats) return { ...c, totalPaid }
+      return {
+        ...c,
+        learnersCount: stats.studentCount || c.learnersCount,
+        totalDue: stats.totalExpected,
+        totalPaid,
+      }
+    })
+  }, [adminClassesList, adminLearners, statsByClass, paidByClass])
+  const classesOptions = useMemo(() => classesWithStats.map((c) => ({ id: c.id, name: c.name })), [classesWithStats])
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [statusFilter, setStatusFilter] = useState<AdminClassStatus | "all">("all")
   const [classFilter, setClassFilter] = useState<string>("all")
   const [showMoreFilters, setShowMoreFilters] = useState(false)
-  const [loading] = useState(false)
 
   const filteredClasses = useMemo(() => {
-    return adminClassesList.filter((cls) => {
+    return classesWithStats.filter((cls) => {
       if (!classOverlapsDateRange(cls.periodStart, cls.periodEnd, dateFrom, dateTo)) return false
       if (statusFilter !== "all" && cls.status !== statusFilter) return false
       if (classFilter !== "all" && cls.id !== classFilter) return false
       return true
     })
-  }, [adminClassesList, dateFrom, dateTo, statusFilter, classFilter])
+  }, [classesWithStats, dateFrom, dateTo, statusFilter, classFilter])
 
   const hasActiveFilters = useMemo(
     () => Boolean(dateFrom || dateTo || statusFilter !== "all" || classFilter !== "all"),
@@ -108,6 +185,18 @@ export default function AdminClassesPage() {
             </>
           }
         />
+
+        {error ? (
+          <Alert variant="destructive" className="mt-5">
+            <AlertTitle>{t("adm_set_load_err")}</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-3">
+              <span>{error}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void refresh()}>
+                {t("adm_learn_reset")}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         {/* Filtres (premium) — la synthèse KPI ci-dessous suit ce périmètre */}
         <div className="mt-5 overflow-hidden rounded-2xl border border-border/80 bg-card shadow-md">
@@ -251,7 +340,11 @@ export default function AdminClassesPage() {
                   <Wallet className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalDue)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalDue)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("adm_class_kpi_due_hint").replace("{n}", String(totals.count))}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-sky-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-sky-500/55 via-cyan-500/45 to-indigo-500/50" />
@@ -265,7 +358,11 @@ export default function AdminClassesPage() {
                   <TrendingUp className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalPaid)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(totals.totalPaid)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">
                 {totals.totalDue > 0
                   ? t("adm_class_kpi_collected_pct").replace("{pct}", String(Math.round(totals.ratio * 100)))
@@ -288,7 +385,11 @@ export default function AdminClassesPage() {
                   <Users className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{totals.learners}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-16" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{totals.learners}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("adm_class_kpi_learners_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-violet-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-violet-500/55 via-fuchsia-500/45 to-cyan-500/50" />
@@ -313,6 +414,7 @@ export default function AdminClassesPage() {
           {!loading &&
             filteredClasses.map((cls) => {
             const ratio = cls.totalDue > 0 ? cls.totalPaid / cls.totalDue : 0
+            const ratioPct = cls.totalPaid > 0 ? Math.max(1, Math.round(ratio * 100)) : 0
             const remaining = cls.totalDue - cls.totalPaid
             return (
               <div
@@ -364,18 +466,26 @@ export default function AdminClassesPage() {
                     <div className="flex items-baseline justify-between text-xs">
                       <span className="text-muted-foreground">{t("adm_class_encashed")}</span>
                       <span className="font-semibold text-foreground">
-                        {Math.round(ratio * 100)}% · {formatMoney(cls.totalPaid)}
+                        {ratioPct}% · {formatMoney(cls.totalPaid)}
                       </span>
                     </div>
                     <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-sky-500 to-indigo-500"
-                        style={{ width: `${Math.min(100, Math.round(ratio * 100))}%` }}
+                        style={{ width: `${Math.min(100, ratioPct)}%` }}
                       />
                     </div>
                     <p className="mt-1.5 text-[11px] text-muted-foreground">
                       {t("adm_class_remain")}{" "}
-                      <span className="font-semibold text-foreground">{formatMoney(Math.max(0, remaining))}</span>
+                      <span
+                        className={
+                          remaining > 0.01
+                            ? "font-semibold text-red-600 dark:text-red-400"
+                            : "font-semibold text-emerald-700 dark:text-emerald-400"
+                        }
+                      >
+                        {formatMoney(Math.max(0, remaining))}
+                      </span>
                     </p>
                   </div>
 

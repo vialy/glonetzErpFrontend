@@ -1,27 +1,25 @@
 import type { LoginResponse } from "@/types"
 
 export interface LoginInput {
-  phone: string
-  pin: string
+  email: string
+  password: string
 }
 
-export interface ChangePinInput {
-  currentPin: string
-  newPin: string
+export interface ChangePasswordInput {
+  currentPassword: string
+  newPassword: string
 }
 
-export interface ResetPinInput {
-  phone: string
-  tempPin: string
-  newPin: string
+export interface ResetPasswordInput {
+  email: string
+  tempPassword: string
+  newPassword: string
 }
 
 export interface AuthProvider {
   login(input: LoginInput): Promise<LoginResponse>
-  changePin(input: ChangePinInput): Promise<void>
-  requestPinReset(phone: string): Promise<void>
-  resetPinWithCode(input: ResetPinInput): Promise<void>
-  /** Mock / API : envoie un nouveau PIN par SMS et impose un changement à la prochaine connexion */
-  requestManagerPinSms(phone: string): Promise<void>
+  getMe(current: LoginResponse): Promise<LoginResponse>
+  changePassword(input: ChangePasswordInput): Promise<void>
+  requestPasswordReset(email: string): Promise<void>
+  resetPasswordWithCode(input: ResetPasswordInput): Promise<void>
 }
-

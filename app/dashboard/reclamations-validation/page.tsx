@@ -12,9 +12,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { claimsService, type ClaimRecord } from "@/domains/claims"
 import { paymentsService } from "@/domains/payments"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { fetchStaffClaims, resolveStaffClaim } from "@/services/staff-claims.service"
+import { fetchStaffPayments } from "@/services/staff-payments.service"
+import type { AdminPaymentItem } from "@/services/admin-mock.service"
+import { getApiErrorMessage } from "@/lib/api-error"
 import {
   Dialog,
   DialogContent,
@@ -50,6 +56,7 @@ export default function ReclamationsValidationPage() {
   const { role } = useAuth()
   const { t } = useLocale()
   const [claims, setClaims] = useState<ClaimRecord[]>([])
+  const [loading, setLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [query, setQuery] = useState("")
@@ -60,6 +67,31 @@ export default function ReclamationsValidationPage() {
   const [page, setPage] = useState(1)
   const [dialog, setDialog] = useState<{ type: "approve" | "reject"; claim: ClaimRecord } | null>(null)
   const [rejectReason, setRejectReason] = useState("")
+  // Mode API : la resolution exige de lier la reclamation a un paiement existant.
+  const [paymentChoices, setPaymentChoices] = useState<AdminPaymentItem[]>([])
+  const [selectedPaymentId, setSelectedPaymentId] = useState("")
+  const [loadingPayments, setLoadingPayments] = useState(false)
+
+  async function openResolveDialog(type: "approve" | "reject", claim: ClaimRecord) {
+    setRejectReason("")
+    setSelectedPaymentId("")
+    setPaymentChoices([])
+    setDialog({ type, claim })
+    if (isApiDataProvider() && claim.userId) {
+      setLoadingPayments(true)
+      try {
+        const items = await fetchStaffPayments({ userId: claim.userId })
+        setPaymentChoices(items)
+        // Pre-selection du paiement en attente (cas le plus frequent d'une reclamation).
+        const pending = items.find((p) => p.status === "pending")
+        if (pending) setSelectedPaymentId(pending.id)
+      } catch {
+        setPaymentChoices([])
+      } finally {
+        setLoadingPayments(false)
+      }
+    }
+  }
 
   useEffect(() => {
     if (role === "accountant") {
@@ -68,7 +100,14 @@ export default function ReclamationsValidationPage() {
   }, [role, router])
 
   useEffect(() => {
-    const refresh = async () => setClaims(await claimsService.getAll())
+    const refresh = async () => {
+      // Mode API : reclamations reelles du back-end (GET /staff/claims).
+      try {
+        setClaims(isApiDataProvider() ? await fetchStaffClaims() : await claimsService.getAll())
+      } finally {
+        setLoading(false)
+      }
+    }
     void refresh()
     window.addEventListener("claims-updated", refresh)
     return () => window.removeEventListener("claims-updated", refresh)
@@ -79,6 +118,16 @@ export default function ReclamationsValidationPage() {
     setProcessingId(claim.id)
     setMessage(null)
     try {
+      if (isApiDataProvider()) {
+        await resolveStaffClaim(claim.id, {
+          status: "successful",
+          paymentId: selectedPaymentId,
+          resolutionNote: `Reclamation ${claim.id} validee apres verification`,
+        })
+        setClaims(await fetchStaffClaims())
+        setMessage({ type: "success", text: `Reclamation ${claim.id} validee et paiement synchronise.` })
+        return
+      }
       await new Promise((resolve) => setTimeout(resolve, 500))
       await paymentsService.applyClaimPayment({
         claimId: claim.id,
@@ -89,8 +138,11 @@ export default function ReclamationsValidationPage() {
       await claimsService.updateStatus(claim.id, "resolue")
       setClaims(await claimsService.getAll())
       setMessage({ type: "success", text: `Reclamation ${claim.id} validee et paiement applique.` })
-    } catch {
-      setMessage({ type: "error", text: "Impossible de valider cette reclamation pour le moment." })
+    } catch (e) {
+      setMessage({
+        type: "error",
+        text: getApiErrorMessage(e, "Impossible de valider cette reclamation pour le moment."),
+      })
     } finally {
       setProcessingId(null)
     }
@@ -100,12 +152,25 @@ export default function ReclamationsValidationPage() {
     setProcessingId(claim.id)
     setMessage(null)
     try {
+      if (isApiDataProvider()) {
+        await resolveStaffClaim(claim.id, {
+          status: "failed",
+          paymentId: selectedPaymentId,
+          resolutionNote: rejectReason.trim() || "Reclamation rejetee apres verification",
+        })
+        setClaims(await fetchStaffClaims())
+        setMessage({ type: "success", text: `Reclamation ${claim.id} rejetee.` })
+        return
+      }
       await new Promise((resolve) => setTimeout(resolve, 500))
       await claimsService.updateStatus(claim.id, "rejetee")
       setClaims(await claimsService.getAll())
       setMessage({ type: "success", text: `Reclamation ${claim.id} rejetee.` })
-    } catch {
-      setMessage({ type: "error", text: "Impossible de rejeter cette reclamation pour le moment." })
+    } catch (e) {
+      setMessage({
+        type: "error",
+        text: getApiErrorMessage(e, "Impossible de rejeter cette reclamation pour le moment."),
+      })
     } finally {
       setProcessingId(null)
     }
@@ -245,7 +310,13 @@ export default function ReclamationsValidationPage() {
               </SelectContent>
             </Select>
           </div>
-          {filteredClaims.length === 0 ? (
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={`sk-${i}`} className="h-40 w-full rounded-lg" />
+              ))}
+            </div>
+          ) : filteredClaims.length === 0 ? (
             <div className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
               Aucune reclamation a traiter.
             </div>
@@ -284,7 +355,7 @@ export default function ReclamationsValidationPage() {
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                   <Button
                     className="sm:min-w-40"
-                    onClick={() => setDialog({ type: "approve", claim })}
+                    onClick={() => void openResolveDialog("approve", claim)}
                     disabled={claim.status === "resolue" || claim.status === "rejetee" || processingId !== null}
                   >
                     <CheckCircle2 className="mr-2 size-4" />
@@ -292,10 +363,7 @@ export default function ReclamationsValidationPage() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      setRejectReason("")
-                      setDialog({ type: "reject", claim })
-                    }}
+                    onClick={() => void openResolveDialog("reject", claim)}
                     disabled={claim.status === "resolue" || claim.status === "rejetee" || processingId !== null}
                   >
                     <XCircle className="mr-2 size-4" />
@@ -316,7 +384,16 @@ export default function ReclamationsValidationPage() {
           ) : null}
         </CardContent>
       </Card>
-      <Dialog open={Boolean(dialog)} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={Boolean(dialog)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDialog(null)
+            setSelectedPaymentId("")
+            setPaymentChoices([])
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{dialog?.type === "approve" ? "Valider la reclamation ?" : "Rejeter la reclamation ?"}</DialogTitle>
@@ -324,6 +401,39 @@ export default function ReclamationsValidationPage() {
               {dialog ? `Action sur ${dialog.claim.id} (${formatFcfa(dialog.claim.amount)}).` : ""}
             </DialogDescription>
           </DialogHeader>
+
+          {isApiDataProvider() ? (
+            <div className="space-y-2">
+              <Label>Paiement concerne</Label>
+              {loadingPayments ? (
+                <p className="text-xs text-muted-foreground">Chargement des paiements de l&apos;apprenant...</p>
+              ) : paymentChoices.length === 0 ? (
+                <p className="text-xs text-destructive">
+                  Aucun paiement trouve pour cet apprenant : impossible de resoudre la reclamation.
+                </p>
+              ) : (
+                <Select value={selectedPaymentId} onValueChange={setSelectedPaymentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choisir le paiement lie" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentChoices.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {formatFcfa(p.amount)} ·{" "}
+                        {p.status === "pending" ? "En attente" : p.status === "success" ? "Valide" : "Manuel"} ·{" "}
+                        {p.createdAt.slice(0, 10)} · {p.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Le back-end lie la reclamation a ce paiement et synchronise son statut
+                ({dialog?.type === "approve" ? "valide" : "echoue"}).
+              </p>
+            </div>
+          ) : null}
+
           {dialog?.type === "reject" ? (
             <div className="space-y-2">
               <Label htmlFor="reject-reason">Motif du rejet</Label>
@@ -333,8 +443,13 @@ export default function ReclamationsValidationPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>Annuler</Button>
             <Button
+              disabled={processingId !== null || (isApiDataProvider() && !selectedPaymentId)}
               onClick={async () => {
                 if (!dialog) return
+                if (isApiDataProvider() && !selectedPaymentId) {
+                  setMessage({ type: "error", text: "Selectionnez le paiement concerne." })
+                  return
+                }
                 if (dialog.type === "approve") {
                   await approveClaim(dialog.claim)
                   setDialog(null)
@@ -345,7 +460,6 @@ export default function ReclamationsValidationPage() {
                   return
                 }
                 await rejectClaim(dialog.claim)
-                setMessage({ type: "success", text: `Reclamation ${dialog.claim.id} rejetee. Motif: ${rejectReason}` })
                 setDialog(null)
               }}
             >

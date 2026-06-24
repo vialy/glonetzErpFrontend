@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
 import { LocaleProvider } from '@/hooks/use-locale'
+import { AuthProvider } from '@/components/auth-provider'
 import { Toaster } from '@/components/ui/toaster'
 import './globals.css'
 
@@ -36,7 +37,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <LocaleProvider>
-            {children}
+            <AuthProvider>
+              {children}
+            </AuthProvider>
             <Toaster />
           </LocaleProvider>
         </ThemeProvider>

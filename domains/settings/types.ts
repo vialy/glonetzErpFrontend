@@ -1,4 +1,4 @@
-export type PaymentGatewayId = "monero" | "tranzak" | "neero"
+export type PaymentGatewayId = "monero" | "tranzak" | "neero" | "none"
 
 export interface StaffSettings {
   id: string

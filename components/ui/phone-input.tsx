@@ -11,6 +11,7 @@ import {
   type ParsedCountry,
 } from "react-international-phone"
 
+import { clampPhoneNationalDigits, getMaxNationalDigits } from "@/lib/phone-validation"
 import { cn } from "@/lib/utils"
 
 const PREFERRED_COUNTRIES: CountryIso2[] = ["cm", "ci", "sn", "bf", "bj", "tg", "ng", "fr"]
@@ -37,7 +38,10 @@ function buildCountryList(search: string): ParsedCountry[] {
   }
 
   const preferred = PREFERRED_COUNTRIES.map((iso) => all.find((c) => c.iso2 === iso)).filter(
-    (c): c is ParsedCountry => Boolean(c) && matches(c),
+    (c): c is ParsedCountry => {
+      if (!c) return false
+      return matches(c)
+    },
   )
 
   const preferredSet = new Set(preferred.map((c) => c.iso2))
@@ -80,8 +84,12 @@ export function PhoneInputField({
     preferredCountries: PREFERRED_COUNTRIES,
     disableDialCodeAndPrefix: true,
     disableFormatting: true,
-    onChange: ({ phone }) => onChange(phone),
+    onChange: ({ phone, country: nextCountry }) => {
+      onChange(clampPhoneNationalDigits(phone, nextCountry.dialCode))
+    },
   })
+
+  const maxNationalDigits = getMaxNationalDigits(country.dialCode)
 
   const countries = useMemo(() => buildCountryList(search), [search])
 
@@ -126,6 +134,7 @@ export function PhoneInputField({
             aria-invalid={invalid || undefined}
             value={inputValue}
             onChange={handlePhoneValueChange}
+            maxLength={maxNationalDigits}
             placeholder={placeholder}
             className="h-full w-full bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground md:text-sm"
           />

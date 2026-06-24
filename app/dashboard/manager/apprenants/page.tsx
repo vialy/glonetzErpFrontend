@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
   Filter,
   GraduationCap,
   Phone,
@@ -16,14 +18,16 @@ import {
   Users,
   Wallet,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { ManagerLearnersService, type ManagedLearner } from "@/domains/manager-learners"
+import type { ManagedLearnerStatus } from "@/domains/manager-learners/types"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
 import { AdminKpiCard } from "@/components/admin/admin-kpi-card"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -126,21 +130,24 @@ function LearnerListTab({
   const [query, setQuery] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
+  const [statusFilter, setStatusFilter] = useState<"all" | ManagedLearnerStatus>("all")
   const [classFilter, setClassFilter] = useState<string>("all")
   const [paymentSituation, setPaymentSituation] = useState<PaymentSituation>("all")
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
 
   const classOptions = useMemo(() => {
     const s = new Set<string>()
     learners.forEach((l) => s.add(l.className))
-    return [...s].sort()
+    return [...s].sort().map((name) => ({ id: name, name }))
   }, [learners])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return learners.filter((l) => {
       if (!learnerEnrolledInRange(l.enrolledAt, dateFrom, dateTo)) return false
+      if (statusFilter !== "all" && (l.status ?? "active") !== statusFilter) return false
       if (classFilter !== "all" && l.className !== classFilter) return false
       if (!paymentMatches(paymentSituation, l)) return false
       if (!q) return true
@@ -151,15 +158,36 @@ function LearnerListTab({
         l.className.toLowerCase().includes(q)
       )
     })
-  }, [learners, query, dateFrom, dateTo, classFilter, paymentSituation])
+  }, [learners, query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation])
 
   const hasActiveFilters = useMemo(
     () =>
       Boolean(
-        query.trim() || dateFrom || dateTo || classFilter !== "all" || paymentSituation !== "all",
+        query.trim() ||
+          dateFrom ||
+          dateTo ||
+          statusFilter !== "all" ||
+          classFilter !== "all" ||
+          paymentSituation !== "all",
       ),
-    [query, dateFrom, dateTo, classFilter, paymentSituation],
+    [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation],
   )
+
+  const advancedFilterCount = useMemo(() => {
+    let count = 0
+    if (classFilter !== "all") count += 1
+    return count
+  }, [classFilter])
+
+  const paymentCounts = useMemo(() => {
+    let fullyPaid = 0
+    let outstanding = 0
+    for (const l of learners) {
+      if (l.tuitionDue - sumPaid(l) <= 0.01) fullyPaid += 1
+      else outstanding += 1
+    }
+    return { all: learners.length, fullyPaid, outstanding }
+  }, [learners])
 
   const totals = useMemo(() => {
     const totalDue = filtered.reduce((s, l) => s + l.tuitionDue, 0)
@@ -177,7 +205,7 @@ function LearnerListTab({
 
   useEffect(() => {
     setPage(1)
-  }, [query, dateFrom, dateTo, classFilter, paymentSituation, pageSize])
+  }, [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, pageSize])
 
   useEffect(() => {
     if (page > pageCount) setPage(pageCount)
@@ -187,6 +215,7 @@ function LearnerListTab({
     setQuery("")
     setDateFrom("")
     setDateTo("")
+    setStatusFilter("all")
     setClassFilter("all")
     setPaymentSituation("all")
   }
@@ -200,22 +229,31 @@ function LearnerListTab({
               <SlidersHorizontal className="size-5" />
             </div>
             <div>
-              <p className="text-sm font-semibold tracking-tight">Filtres</p>
-              <p className="mt-0.5 text-xs text-white/75">
-                Periode d&apos;inscription, classe, situation de paiement et recherche libre.
-              </p>
+              <p className="text-sm font-semibold tracking-tight">{t("adm_learn_filters")}</p>
+              <p className="mt-0.5 text-xs text-white/75">{t("adm_learn_filters_hint")}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {hasActiveFilters ? (
               <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-medium backdrop-blur">
-                Filtres actifs
+                {t("adm_learn_filters_active")}
               </span>
             ) : (
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[11px] font-medium text-emerald-100">
-                Vue complete ({learners.length} apprenants)
+                {t("adm_learn_filters_full")} ({learners.length} {t("adm_learn_learners")})
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setShowMoreFilters((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/20"
+            >
+              <SlidersHorizontal className="size-3.5" />
+              {showMoreFilters ? t("adm_learn_less_filters") : t("adm_learn_more_filters")}
+              {!showMoreFilters && advancedFilterCount > 0 ? (
+                <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] leading-none">{advancedFilterCount}</span>
+              ) : null}
+            </button>
             <button
               type="button"
               onClick={resetFilters}
@@ -223,7 +261,7 @@ function LearnerListTab({
               className="inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <RotateCcw className="size-3.5" />
-              Reinitialiser
+              {t("adm_learn_reset")}
             </button>
           </div>
         </div>
@@ -232,33 +270,33 @@ function LearnerListTab({
           <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <CalendarDays className="size-3.5 text-fuchsia-600" />
-              Date d&apos;inscription
+              {t("adm_learn_date_reg")}
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="text-[11px] font-medium text-muted-foreground">Du</span>
+                <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_date_from")}</span>
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                  className="h-9 w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs shadow-sm"
                 />
               </label>
               <label className="space-y-1.5">
-                <span className="text-[11px] font-medium text-muted-foreground">Au</span>
+                <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_date_to")}</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                  className="h-9 w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs shadow-sm"
                 />
               </label>
             </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                className="h-11 rounded-xl pl-9"
-                placeholder={t("mgr_search")}
+                className="h-9 rounded-xl pl-9 text-xs"
+                placeholder={t("adm_learn_placeholder")}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -268,79 +306,137 @@ function LearnerListTab({
           <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <Filter className="size-3.5 text-violet-600" />
-              Affinage
+              {t("adm_learn_refinement")}
             </div>
             <label className="space-y-1.5">
-              <span className="text-[11px] font-medium text-muted-foreground">{t("mgr_filter_class")}</span>
-              <div className="relative">
-                <GraduationCap className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <select
-                  value={classFilter}
-                  onChange={(e) => setClassFilter(e.target.value)}
-                  className="min-h-10 w-full appearance-none rounded-xl border border-input bg-background py-2 pr-8 pl-9 text-sm shadow-sm"
-                >
-                  <option value="all">{t("mgr_all_classes")}</option>
-                  {classOptions.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-[11px] font-medium text-muted-foreground">Situation de paiement</span>
+              <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_status")}</span>
               <select
-                value={paymentSituation}
-                onChange={(e) => setPaymentSituation(e.target.value as PaymentSituation)}
-                className="min-h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                className="h-9 w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs shadow-sm"
               >
-                <option value="all">Toutes</option>
-                <option value="solde_ok">Solde regle</option>
-                <option value="en_retard">Reste a payer</option>
+                <option value="all">{t("adm_learn_opt_all")}</option>
+                <option value="active">{t("adm_learn_opt_active")}</option>
+                <option value="suspended">{t("adm_learn_opt_suspended")}</option>
               </select>
             </label>
+            <div className="space-y-2">
+              <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_pay_sit")}</span>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { value: "all" as const, label: t("adm_learn_opt_pay_all"), count: paymentCounts.all, icon: Users },
+                    {
+                      value: "solde_ok" as const,
+                      label: t("adm_learn_opt_solde"),
+                      count: paymentCounts.fullyPaid,
+                      icon: CheckCircle2,
+                    },
+                    {
+                      value: "en_retard" as const,
+                      label: t("adm_learn_opt_due"),
+                      count: paymentCounts.outstanding,
+                      icon: CircleAlert,
+                    },
+                  ] as const
+                ).map(({ value, label, count, icon: Icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setPaymentSituation(value)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                      paymentSituation === value
+                        ? value === "solde_ok"
+                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-900 dark:text-emerald-100"
+                          : value === "en_retard"
+                            ? "border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100"
+                            : "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
+                        : "border-border bg-background text-muted-foreground hover:border-border/80 hover:bg-muted/40",
+                    )}
+                  >
+                    <Icon className="size-3.5 shrink-0 opacity-80" />
+                    {label}
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none",
+                        paymentSituation === value ? "bg-black/10" : "bg-muted",
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {showMoreFilters ? (
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_class")}</span>
+                <ClassSearchSelect
+                  value={classFilter}
+                  onValueChange={setClassFilter}
+                  options={classOptions}
+                  allLabel={t("adm_learn_opt_all_classes")}
+                  searchPlaceholder={t("adm_class_search_placeholder")}
+                  emptyLabel={t("adm_class_search_empty")}
+                  moreResultsLabel={t("adm_class_search_more")}
+                  triggerClassName="h-9 text-xs"
+                />
+              </label>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border/70 bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
+                {advancedFilterCount > 0
+                  ? `${advancedFilterCount} ${t("adm_learn_adv_active")}`
+                  : t("adm_learn_more_filters")}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
           <span className="font-medium text-foreground">
-            {totals.count} apprenant{totals.count !== 1 ? "s" : ""} dans le perimetre
+            {totals.count}{" "}
+            {totals.count === 1 ? t("adm_learn_learner_one") : t("adm_learn_learners")}{" "}
+            {t("adm_learn_scope")}
           </span>
           {totals.count === 0 ? (
             <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-              Aucun resultat — ajustez les filtres
+              {t("adm_learn_no_result")}
             </span>
           ) : null}
         </div>
       </div>
 
       <div className="mt-5">
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Synthese du perimetre</p>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("adm_learn_synth")}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <AdminKpiCard
             label="Pension totale (du)"
             value={formatFcfa(totals.totalDue)}
             hint="Somme des montants dus filtres"
             icon={<Wallet className="size-4 text-violet-600" />}
+            loading={loading}
           />
           <AdminKpiCard
             label="Deja encaisse"
             value={formatFcfa(totals.totalPaid)}
             hint={totals.totalDue > 0 ? `${Math.round(totals.ratio * 100)}% du du sur ce perimetre` : "Aucun du"}
             icon={<Users className="size-4 text-emerald-600" />}
+            loading={loading}
           />
           <AdminKpiCard
             label="Reste global"
             value={formatFcfa(totals.remaining)}
             hint="Ecart cumule sur les lignes filtrees"
             icon={<Wallet className="size-4 text-rose-600" />}
+            loading={loading}
           />
           <AdminKpiCard
             label="Effectif"
             value={`${totals.count}`}
             hint="Hors pagination"
             icon={<GraduationCap className="size-4 text-fuchsia-600" />}
+            loading={loading}
           />
         </div>
       </div>
@@ -378,7 +474,7 @@ function LearnerListTab({
                     description={t("mgr_empty_learners")}
                     action={
                       <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
-                        Reinitialiser
+                        {t("adm_learn_reset")}
                       </Button>
                     }
                   />
@@ -523,7 +619,7 @@ function LearnerListTab({
             description={t("mgr_empty_learners")}
             action={
               <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
-                Reinitialiser
+                {t("adm_learn_reset")}
               </Button>
             }
           />

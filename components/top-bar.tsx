@@ -47,7 +47,7 @@ export function TopBar({
   const profileHref = getProfileHref(role)
 
   function navigate(href: string) {
-    startLoading()
+    startLoading(href)
     router.push(href)
   }
 
@@ -114,7 +114,7 @@ export function TopBar({
             >
               <Bell className="size-4" />
               {notifications.totalBadge > 0 ? (
-                <span className="absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-destructive-foreground">
+                <span className="absolute -right-1 -top-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-card bg-destructive px-1 text-[11px] font-bold leading-none text-white tabular-nums">
                   {notifications.totalBadge > 9 ? "9+" : notifications.totalBadge}
                 </span>
               ) : null}

@@ -2,7 +2,6 @@ import type { TranslationKey } from "@/services/i18n"
 import type { UserRole } from "@/types"
 
 export function getProfileHref(role: UserRole | null): string {
-  if (role === "student") return "/dashboard/mon-profil"
   if (role === "manager") return "/dashboard/manager/profil"
   if (role === "accountant") return "/dashboard/comptable/profil"
   return "/dashboard/admin/parametres"

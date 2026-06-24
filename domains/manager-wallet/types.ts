@@ -14,6 +14,7 @@ export interface ManagerExpenseRecord {
   comment?: string
   attachmentName?: string
   attachmentDataUrl?: string
+  managerId?: string
 }
 
 export interface ManagerBudgetAllocation {
@@ -21,6 +22,7 @@ export interface ManagerBudgetAllocation {
   allocatedAt: string
   amount: number
   note: string
+  managerId?: string
 }
 
 export interface ManagerBudgetSummary {

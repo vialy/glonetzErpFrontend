@@ -1,39 +1,12 @@
-// Treasury account
-export interface Account {
-  id: string
-  initials: string
-  name: string
-  amount: string
-  currency: string
-  transactions: number
-  lastSync: string
-}
-
-// Sidebar navigation
-export interface NavItem {
-  label: string
-  icon: React.ReactNode
-  active?: boolean
-}
-
-export interface NavSection {
-  title: string
-  items: NavItem[]
-}
-
-// Auth
 export type UserRole = "admin" | "manager" | "student" | "accountant"
 
 export interface LoginResponse {
   token: string
   role: UserRole
+  /** Compat historique : indique un changement de mot de passe obligatoire. */
   mustChangePin: boolean
-  /** E.164 — présent après connexion mock/API pour le profil et le changement de PIN */
+  email?: string
   phone?: string
-}
-
-export interface AuthState {
-  token: string | null
-  role: UserRole | null
-  mustChangePin: boolean
+  staffUserId?: string
+  fullName?: string
 }

@@ -22,6 +22,7 @@ import {
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -57,6 +58,7 @@ import {
   resolvePendingAdminPaymentToSuccess,
   type AdminPaymentItem,
 } from "@/services/admin-mock.service"
+import { isApiDataProvider } from "@/lib/data-provider"
 import { cn } from "@/lib/utils"
 import {
   computePeriodRange,
@@ -87,25 +89,27 @@ function inDateRange(createdAt: string, dateFrom: string, dateTo: string) {
 }
 
 function statusBadge(p: AdminPaymentItem, t: (k: TranslationKey) => string) {
+  const badgeClass =
+    "inline-flex shrink-0 items-center gap-1 overflow-visible whitespace-nowrap"
   if (p.status === "success") {
     return (
-      <Badge className="bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-300">
-        <CheckCircle2 className="mr-1 size-3" />
+      <Badge className={cn(badgeClass, "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-300")}>
+        <CheckCircle2 className="size-3 shrink-0" />
         {t("pay_list_status_ok")}
       </Badge>
     )
   }
   if (p.status === "pending") {
     return (
-      <Badge className="bg-amber-500/15 text-amber-800 hover:bg-amber-500/20">
-        <Clock3 className="mr-1 size-3" />
+      <Badge className={cn(badgeClass, "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20")}>
+        <Clock3 className="size-3 shrink-0" />
         {t("pay_list_status_wait")}
       </Badge>
     )
   }
   return (
-    <Badge variant="secondary" className="gap-1">
-      <Wrench className="size-3" />
+    <Badge variant="secondary" className={badgeClass}>
+      <Wrench className="size-3 shrink-0" />
       {t("pay_list_status_manual")}
     </Badge>
   )
@@ -114,6 +118,28 @@ function statusBadge(p: AdminPaymentItem, t: (k: TranslationKey) => string) {
 function adminPaymentMethodLabel(method: AdminPaymentItem["method"], t: (k: TranslationKey) => string) {
   if (method === "Especes") return t("pay_list_method_cash_full")
   return method === "MTN" ? t("pay_list_method_mtn") : t("pay_list_method_om")
+}
+
+function adminPaymentMethodShortLabel(method: AdminPaymentItem["method"], t: (k: TranslationKey) => string) {
+  if (method === "Especes") return t("pay_list_method_cash_short")
+  return method === "MTN" ? t("pay_list_method_mtn_short") : t("pay_list_method_om_short")
+}
+
+function formatPaymentTableDate(createdAt: string) {
+  const s = createdAt.trim()
+  const match = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/)
+  if (match) {
+    const [, year, month, day, hour, minute] = match
+    const shortYear = year!.slice(2)
+    if (hour && minute) return `${day}/${month}/${shortYear} ${hour}:${minute}`
+    return `${day}/${month}/${shortYear}`
+  }
+  const d = new Date(s)
+  if (!Number.isNaN(d.getTime())) {
+    const pad = (n: number) => String(n).padStart(2, "0")
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+  return s.length > 14 ? `${s.slice(0, 14)}…` : s
 }
 
 function adminPaymentStatusLabel(status: AdminPaymentItem["status"], t: (k: TranslationKey) => string) {
@@ -205,6 +231,7 @@ export type PaymentsListPageProps = {
   exportFilenamePrefix: string
   receiptPreviewLine: string
   pdfIssuerFooter: string
+  loading?: boolean
 }
 
 export function PaymentsListPage({
@@ -214,6 +241,7 @@ export function PaymentsListPage({
   exportFilenamePrefix,
   receiptPreviewLine,
   pdfIssuerFooter,
+  loading = false,
 }: PaymentsListPageProps) {
   const { t, locale } = useLocale()
   const formatMoney = (value: number) =>
@@ -234,10 +262,17 @@ export function PaymentsListPage({
   const [pageSize, setPageSize] = useState(10)
   const [receiptViewPayment, setReceiptViewPayment] = useState<AdminPaymentItem | null>(null)
   const [receiptBusyId, setReceiptBusyId] = useState<string | null>(null)
+  // En mode API, la validation manuelle d'un paiement en attente passe par la
+  // passerelle/webhook : on ne propose pas l'action locale (pas d'endpoint dedie).
+  const canManuallyValidate = !isApiDataProvider()
 
   const classNames = useMemo(() => {
     const s = new Set<string>()
-    payments.forEach((p) => s.add(p.className))
+    // On ignore les classes vides : un SelectItem ne peut pas avoir value="".
+    payments.forEach((p) => {
+      const name = p.className?.trim()
+      if (name) s.add(name)
+    })
     return [...s].sort()
   }, [payments])
 
@@ -630,7 +665,11 @@ export function PaymentsListPage({
                   <CreditCard className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(kpis.total)}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-28" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{formatMoney(kpis.total)}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("pay_list_kpi_amount_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-cyan-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-cyan-500/55 via-sky-500/45 to-indigo-500/50" />
@@ -644,7 +683,11 @@ export function PaymentsListPage({
                   <Receipt className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.count}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-16" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.count}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("pay_list_kpi_tx_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-violet-700/10">
                 <div className="h-full w-full bg-gradient-to-r from-violet-500/55 via-fuchsia-500/45 to-cyan-500/50" />
@@ -658,7 +701,11 @@ export function PaymentsListPage({
                   <CheckCircle2 className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.success}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-16" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.success}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("pay_list_kpi_ok_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-emerald-700/10">
                 <div
@@ -675,7 +722,11 @@ export function PaymentsListPage({
                   <Clock3 className="size-4" />
                 </span>
               </div>
-              <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.pending}</p>
+              {loading ? (
+                <Skeleton className="mt-2 h-7 w-16" />
+              ) : (
+                <p className="mt-2 text-[1.75rem] font-extrabold leading-none tabular-nums text-foreground">{kpis.pending}</p>
+              )}
               <p className="mt-2 text-xs text-muted-foreground">{t("pay_list_kpi_pending_hint")}</p>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-amber-700/10">
                 <div
@@ -688,24 +739,32 @@ export function PaymentsListPage({
         </div>
 
         {/* Table */}
-        <div className="mt-6 hidden overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm md:block">
-          <Table>
+        <div className="mt-6 hidden rounded-2xl border border-border/80 bg-card shadow-sm md:block [&_[data-slot=table-container]]:overflow-x-visible">
+          <Table className="table-fixed w-full">
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead>{t("pay_list_th_ref")}</TableHead>
-                <TableHead>{t("adm_learn_table_name")}</TableHead>
-                <TableHead>{t("adm_learn_table_class")}</TableHead>
-                <TableHead className="text-right">{t("pay_list_th_amount")}</TableHead>
-                <TableHead>{t("pay_list_lbl_method")}</TableHead>
-                <TableHead>{t("mp_col_date")}</TableHead>
-                <TableHead>{t("pay_list_lbl_status")}</TableHead>
-                <TableHead className="sticky right-0 z-10 min-w-[168px] bg-card text-right shadow-[inset_1px_0_0_hsl(var(--border))]">
-                  {t("pay_list_th_action")}
-                </TableHead>
+                <TableHead className="w-[10%]">{t("pay_list_th_ref")}</TableHead>
+                <TableHead className="w-[16%]">{t("adm_learn_table_name")}</TableHead>
+                <TableHead className="w-[14%]">{t("adm_learn_table_class")}</TableHead>
+                <TableHead className="w-[12%] text-right">{t("pay_list_th_amount")}</TableHead>
+                <TableHead className="w-[11%]">{t("pay_list_lbl_status")}</TableHead>
+                <TableHead className="w-[8%]">{t("pay_list_lbl_method")}</TableHead>
+                <TableHead className="w-[11%]">{t("mp_col_date")}</TableHead>
+                <TableHead className="w-[18%] text-right">{t("pay_list_th_action")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paged.length === 0 ? (
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={`sk-${i}`}>
+                    {Array.from({ length: 8 }).map((__, j) => (
+                      <TableCell key={j}>
+                        <Skeleton className="h-4 w-full" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : paged.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="p-0">
                     <AdminEmptyState
@@ -722,16 +781,28 @@ export function PaymentsListPage({
               ) : (
                 paged.map((p) => (
                   <TableRow key={p.id} className="group">
-                    <TableCell className="font-mono text-xs">{p.operatorReference ?? p.id}</TableCell>
-                    <TableCell className="font-medium">{p.learnerName}</TableCell>
-                    <TableCell className="text-muted-foreground">{p.className}</TableCell>
+                    <TableCell className="truncate font-mono text-xs" title={p.operatorReference ?? p.id}>
+                      {p.operatorReference ?? p.id}
+                    </TableCell>
+                    <TableCell className="truncate font-medium" title={p.learnerName}>
+                      {p.learnerName}
+                    </TableCell>
+                    <TableCell className="truncate text-muted-foreground" title={p.className}>
+                      {p.className}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{formatMoney(p.amount)}</TableCell>
-                    <TableCell>{adminPaymentMethodLabel(p.method, t)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{p.createdAt}</TableCell>
-                    <TableCell>{statusBadge(p, t)}</TableCell>
-                    <TableCell className="sticky right-0 z-10 bg-card shadow-[inset_1px_0_0_hsl(var(--border))] group-hover:bg-muted/30">
+                    <TableCell className="whitespace-normal">
+                      {statusBadge(p, t)}
+                    </TableCell>
+                    <TableCell className="text-xs font-medium" title={adminPaymentMethodLabel(p.method, t)}>
+                      {adminPaymentMethodShortLabel(p.method, t)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground" title={p.createdAt}>
+                      {formatPaymentTableDate(p.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
                       <div className="flex flex-wrap items-center justify-end gap-1">
-                        {p.status === "pending" ? (
+                        {p.status === "pending" && canManuallyValidate ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -789,7 +860,11 @@ export function PaymentsListPage({
 
         {/* Mobile */}
         <div className="mt-4 space-y-3 md:hidden">
-          {paged.length === 0 ? (
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={`skm-${i}`} className="h-28 w-full rounded-2xl" />
+            ))
+          ) : paged.length === 0 ? (
             <AdminEmptyState
               title={t("pay_list_empty_title")}
               description={t("pay_list_empty_desc_mob")}
@@ -811,14 +886,14 @@ export function PaymentsListPage({
                     <p className="mt-1 font-semibold">{p.learnerName}</p>
                     <p className="text-xs text-muted-foreground">{p.className}</p>
                   </div>
-                  {statusBadge(p, t)}
+                  <div className="shrink-0">{statusBadge(p, t)}</div>
                 </div>
                 <p className="mt-3 text-lg font-bold tabular-nums">{formatMoney(p.amount)}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {adminPaymentMethodLabel(p.method, t)} · {p.createdAt}
+                  {adminPaymentMethodShortLabel(p.method, t)} · {formatPaymentTableDate(p.createdAt)}
                 </p>
                 <div className="mt-3 flex flex-col gap-2">
-                  {p.status === "pending" ? (
+                  {p.status === "pending" && canManuallyValidate ? (
                     <Button
                       className="w-full rounded-xl"
                       variant="outline"

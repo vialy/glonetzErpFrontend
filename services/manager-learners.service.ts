@@ -25,6 +25,7 @@ function seedLearners(): ManagedLearner[] {
       tuitionDue: 162_000,
       currencyCode: "XOF",
       enrolledAt: t,
+      status: "active",
       payments: [
         {
           id: "PAY-1",
@@ -43,6 +44,7 @@ function seedLearners(): ManagedLearner[] {
       tuitionDue: 180_000,
       currencyCode: "XOF",
       enrolledAt: t,
+      status: "suspended",
       payments: [],
     },
   ]
@@ -114,6 +116,7 @@ export const ManagerLearnersService = {
       tuitionDue: row.tuitionDue,
       currencyCode: "XOF",
       enrolledAt: new Date().toISOString(),
+      status: "active",
       notes: row.notes?.trim() || undefined,
       payments: [],
     }
@@ -140,6 +143,7 @@ export const ManagerLearnersService = {
           tuitionDue: row.tuitionDue,
           currencyCode: "XOF",
           enrolledAt: new Date().toISOString(),
+          status: "active",
           notes: row.notes?.trim() || undefined,
           payments: [],
         })

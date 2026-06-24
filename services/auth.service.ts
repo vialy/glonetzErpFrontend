@@ -1,32 +1,53 @@
 import type { LoginResponse, UserRole } from "@/types"
 
-const SESSION_KEY = "glonetz_session"
-const ATTEMPTS_KEY = "glonetz_attempts"
-const COOLDOWN_KEY = "glonetz_cooldown"
-const PIN_RESET_TEMP_KEY = "glonetz_pin_reset_temp"
-/**
- * Overrides PIN / mustChangePin (mock, localStorage). Réinitialisé à la déconnexion via `clearAuthBrowserState`.
- * Incrémenter la clé si besoin d’invalider d’anciens stockages (v2 : reset global → manager 5678 par défaut).
- */
-export const ACCOUNTS_STORAGE_KEY = "glonetz_auth_accounts_v2"
+export const SESSION_KEY = "glonetz_staff_session"
+const ATTEMPTS_KEY = "glonetz_staff_attempts"
+const COOLDOWN_KEY = "glonetz_staff_cooldown"
+const PASSWORD_RESET_TEMP_KEY = "glonetz_staff_password_reset_temp"
+export const ACCOUNTS_STORAGE_KEY = "glonetz_staff_auth_accounts_v3"
 const MAX_ATTEMPTS = 3
 const COOLDOWN_SECONDS = 30
 
-type AccountOverride = { pin?: string; mustChangePin?: boolean }
+type AccountOverride = { password?: string; mustChangePassword?: boolean }
 
-// Comptes mock pour les différents rôles
-const MOCK_ACCOUNTS: Record<
-  string,
-  { pin: string; role: UserRole; mustChangePin: boolean }
-> = {
-  "+237600000000": { pin: "1234", role: "admin", mustChangePin: false },
-  "+237600000001": { pin: "0000", role: "student", mustChangePin: true },
-  "+237600000002": { pin: "5678", role: "manager", mustChangePin: false },
-  "+237600000003": { pin: "2468", role: "accountant", mustChangePin: false },
+type StaffMockAccount = {
+  password: string
+  role: UserRole
+  staffUserId: string
+  phone: string
+  mustChangePassword: boolean
+}
+
+const MOCK_ACCOUNTS: Record<string, StaffMockAccount> = {
+  "admin@glonetz.cm": {
+    password: "Admin1234",
+    role: "admin",
+    staffUserId: "u1",
+    phone: "+237600000000",
+    mustChangePassword: false,
+  },
+  "manager@glonetz.cm": {
+    password: "Manager5678",
+    role: "manager",
+    staffUserId: "u2",
+    phone: "+237600000002",
+    mustChangePassword: false,
+  },
+  "comptable@glonetz.cm": {
+    password: "Compta2468",
+    role: "accountant",
+    staffUserId: "u3",
+    phone: "+237600000003",
+    mustChangePassword: false,
+  },
 }
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase()
 }
 
 function readOverrides(): Record<string, AccountOverride> {
@@ -44,145 +65,141 @@ function writeOverrides(next: Record<string, AccountOverride>) {
   localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(next))
 }
 
-function setAccountOverride(phone: string, patch: AccountOverride) {
+function setAccountOverride(email: string, patch: AccountOverride) {
+  const key = normalizeEmail(email)
   const all = readOverrides()
-  all[phone] = { ...all[phone], ...patch }
+  all[key] = { ...all[key], ...patch }
   writeOverrides(all)
 }
 
-function getMergedAccount(phone: string) {
-  const base = MOCK_ACCOUNTS[phone]
+function getMergedAccount(email: string) {
+  const key = normalizeEmail(email)
+  const base = MOCK_ACCOUNTS[key]
   if (!base) return null
-  const o = readOverrides()[phone]
+  const o = readOverrides()[key]
   return {
-    pin: o?.pin ?? base.pin,
+    password: o?.password ?? base.password,
     role: base.role,
-    mustChangePin: o?.mustChangePin ?? base.mustChangePin,
+    staffUserId: base.staffUserId,
+    phone: base.phone,
+    mustChangePassword: o?.mustChangePassword ?? base.mustChangePassword,
   }
 }
 
-function randomFourDigitPin(): string {
-  return String(1000 + Math.floor(Math.random() * 9000))
+function randomTempPassword(): string {
+  return `Tmp${String(1000 + Math.floor(Math.random() * 9000))}!`
 }
 
 export type ClearAuthBrowserStateOptions = {
-  /**
-   * `true` (defaut) : supprime aussi les PIN mock persistes (`glonetz_auth_accounts_v2`).
-   * `false` : conserve les PIN (ex. apres envoi SMS manager : nouveau PIN deja enregistre, on ne veut que fermer la session).
-   */
   clearMockPinOverrides?: boolean
 }
 
-/** Déconnexion côté navigateur : cookie de session, compteurs login ; optionnellement les PIN mock. */
 export function clearAuthBrowserState(options?: ClearAuthBrowserStateOptions): void {
-  const clearPins = options?.clearMockPinOverrides !== false
+  const clearAccounts = options?.clearMockPinOverrides !== false
   if (typeof document !== "undefined") {
     document.cookie = `${SESSION_KEY}=; path=/; max-age=0`
   }
   if (typeof sessionStorage !== "undefined") {
     sessionStorage.removeItem(ATTEMPTS_KEY)
     sessionStorage.removeItem(COOLDOWN_KEY)
+    sessionStorage.removeItem(PASSWORD_RESET_TEMP_KEY)
   }
-  if (clearPins && typeof localStorage !== "undefined") {
+  if (clearAccounts && typeof localStorage !== "undefined") {
     localStorage.removeItem(ACCOUNTS_STORAGE_KEY)
   }
 }
 
 export const AuthService = {
-  // ---- Login ----
-  async login(phone: string, pin: string): Promise<LoginResponse> {
+  async login(email: string, password: string): Promise<LoginResponse> {
     await delay(800)
 
-    const account = getMergedAccount(phone)
-    if (!account || account.pin !== pin) {
+    const account = getMergedAccount(email)
+    if (!account || account.password !== password || account.role === "student") {
       throw new Error("INVALID_CREDENTIALS")
     }
 
     return {
       token: `mock_token_${Date.now()}`,
       role: account.role,
-      mustChangePin: account.mustChangePin,
-      phone,
+      mustChangePin: account.mustChangePassword,
+      email: normalizeEmail(email),
+      phone: account.phone,
+      staffUserId: account.staffUserId,
     }
   },
 
-  // ---- Change PIN (première connexion ou après SMS) ----
-  async changePin(currentPin: string, newPin: string): Promise<void> {
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     await delay(600)
     const session = this.getSession()
-    const phone = session?.phone
-    if (!phone) throw new Error("PIN_CHANGE_FAILED")
+    const email = session?.email
+    if (!email) throw new Error("PASSWORD_CHANGE_FAILED")
 
-    const acc = getMergedAccount(phone)
-    if (!acc || acc.pin !== currentPin) throw new Error("PIN_CHANGE_FAILED")
-    if (!/^\d{4}$/.test(newPin) || newPin === currentPin) {
-      throw new Error("PIN_CHANGE_FAILED")
+    const acc = getMergedAccount(email)
+    if (!acc || acc.password !== currentPassword) throw new Error("PASSWORD_CHANGE_FAILED")
+    if (newPassword.length < 6 || newPassword === currentPassword) {
+      throw new Error("PASSWORD_CHANGE_FAILED")
     }
 
-    setAccountOverride(phone, { pin: newPin, mustChangePin: false })
+    setAccountOverride(email, { password: newPassword, mustChangePassword: false })
   },
 
-  // ---- Nouveau PIN par SMS (profil gestionnaire, mock) ----
-  async requestManagerPinSms(phone: string): Promise<void> {
-    await delay(700)
-    const acc = getMergedAccount(phone)
-    if (!acc || acc.role !== "manager") {
-      throw new Error("FORBIDDEN")
-    }
-    const newPin = randomFourDigitPin()
-    setAccountOverride(phone, { pin: newPin, mustChangePin: true })
-    console.info(
-      `[Glonetz SMS mock] Nouveau PIN gestionnaire envoyé au ${phone}: ${newPin} — première connexion : changement obligatoire.`,
-    )
+  /** @deprecated Conservé pour compat — redirige vers changePassword. */
+  async changePin(currentPin: string, newPin: string): Promise<void> {
+    return this.changePassword(currentPin, newPin)
   },
 
-  // ---- Demande de reset PIN ----
-  async requestPinReset(phone: string): Promise<void> {
+  async requestPasswordReset(email: string): Promise<void> {
     await delay(1000)
-    const acc = getMergedAccount(phone)
+    const acc = getMergedAccount(email)
     if (!acc) return
 
-    const tempPin = randomFourDigitPin()
+    const tempPassword = randomTempPassword()
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.setItem(
-        PIN_RESET_TEMP_KEY,
-        JSON.stringify({ phone, tempPin, createdAt: Date.now() }),
+        PASSWORD_RESET_TEMP_KEY,
+        JSON.stringify({ email: normalizeEmail(email), tempPassword, createdAt: Date.now() }),
       )
     }
-    console.info(`[Glonetz SMS mock] Code temporaire pour ${phone}: ${tempPin}`)
+    console.info(`[Glonetz email mock] Mot de passe temporaire pour ${normalizeEmail(email)}: ${tempPassword}`)
   },
 
-  // ---- Reset PIN avec code temporaire ----
-  async resetPinWithCode(phone: string, tempPin: string, newPin: string): Promise<void> {
+  /** @deprecated Alias historique. */
+  async requestPinReset(email: string): Promise<void> {
+    return this.requestPasswordReset(email)
+  },
+
+  async resetPasswordWithCode(email: string, tempPassword: string, newPassword: string): Promise<void> {
     await delay(800)
 
-    const acc = getMergedAccount(phone)
-    if (!acc) throw new Error("PIN_RESET_FAILED")
-
-    if (!/^\d{4}$/.test(newPin)) throw new Error("PIN_RESET_FAILED")
-
-    if (newPin === tempPin) throw new Error("PIN_SAME_AS_TEMP")
-    if (newPin === acc.pin) throw new Error("PIN_SAME_AS_CURRENT")
+    const acc = getMergedAccount(email)
+    if (!acc) throw new Error("PASSWORD_RESET_FAILED")
+    if (newPassword.length < 6) throw new Error("PASSWORD_RESET_FAILED")
+    if (newPassword === tempPassword) throw new Error("PASSWORD_SAME_AS_TEMP")
+    if (newPassword === acc.password) throw new Error("PASSWORD_SAME_AS_CURRENT")
 
     if (typeof sessionStorage !== "undefined") {
-      const raw = sessionStorage.getItem(PIN_RESET_TEMP_KEY)
-      if (!raw) throw new Error("PIN_RESET_INVALID_TEMP")
+      const raw = sessionStorage.getItem(PASSWORD_RESET_TEMP_KEY)
+      if (!raw) throw new Error("PASSWORD_RESET_INVALID_TEMP")
       try {
-        const pending = JSON.parse(raw) as { phone?: string; tempPin?: string }
-        if (pending.phone !== phone || pending.tempPin !== tempPin) {
-          throw new Error("PIN_RESET_INVALID_TEMP")
+        const pending = JSON.parse(raw) as { email?: string; tempPassword?: string }
+        if (pending.email !== normalizeEmail(email) || pending.tempPassword !== tempPassword) {
+          throw new Error("PASSWORD_RESET_INVALID_TEMP")
         }
       } catch (e) {
-        if (e instanceof Error && e.message === "PIN_RESET_INVALID_TEMP") throw e
-        throw new Error("PIN_RESET_INVALID_TEMP")
+        if (e instanceof Error && e.message === "PASSWORD_RESET_INVALID_TEMP") throw e
+        throw new Error("PASSWORD_RESET_INVALID_TEMP")
       }
-      sessionStorage.removeItem(PIN_RESET_TEMP_KEY)
+      sessionStorage.removeItem(PASSWORD_RESET_TEMP_KEY)
     }
 
-    setAccountOverride(phone, { pin: newPin, mustChangePin: false })
+    setAccountOverride(email, { password: newPassword, mustChangePassword: false })
   },
 
-  // ---- Gestion session (cookies + tentatives) ----
+  /** @deprecated Alias historique. */
+  async resetPinWithCode(email: string, tempPassword: string, newPassword: string): Promise<void> {
+    return this.resetPasswordWithCode(email, tempPassword, newPassword)
+  },
+
   storeSession(response: LoginResponse) {
     if (typeof window === "undefined") return
     document.cookie = `${SESSION_KEY}=${encodeURIComponent(

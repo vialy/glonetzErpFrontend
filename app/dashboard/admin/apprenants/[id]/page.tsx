@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   Eye,
   GraduationCap,
   KeyRound,
+  Loader2,
   Pencil,
   Phone,
   Receipt,
@@ -20,6 +21,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -59,10 +61,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
-import { useAdminLearners } from "@/hooks/use-admin-learners"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
+import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useAdminPayments } from "@/hooks/use-admin-payments"
 import { useLocale } from "@/hooks/use-locale"
+import { learnersService } from "@/domains/learners"
+import { getApiErrorMessage } from "@/lib/api-error"
+import { isApiDataProvider } from "@/lib/data-provider"
+import {
+  fetchStaffPayments,
+  getStaffPaymentById,
+  recordManualPayment,
+} from "@/services/staff-payments.service"
 import {
   formatFcfa,
   getClassById,
@@ -72,6 +83,7 @@ import {
   sendLearnerPinSmsMock,
   setLearnerStatus,
   updateLearner,
+  type AdminLearner,
   type AdminPaymentItem,
 } from "@/services/admin-mock.service"
 import { formatFcfaForPdf, sanitizeTextForPdf } from "@/lib/pdf-text"
@@ -199,15 +211,89 @@ export default function AdminApprenantFichePage() {
   const { t } = useLocale()
   const params = useParams<{ id: string }>()
   const id = params?.id ?? ""
-  const learners = useAdminLearners()
-  const adminClasses = useAdminClasses()
+  const { learners, loading: learnersLoading } = useAdminLearnersQuery()
+  const { classes: adminClasses } = useAdminClassesQuery()
   const paymentsVersion = useAdminPayments()
 
-  const learner = useMemo(() => learners.find((l) => l.id === id), [learners, id])
+  const [learner, setLearner] = useState<(AdminLearner & { className?: string }) | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(true)
 
-  const paymentHistory = useMemo(() => {
-    if (!learner) return []
-    return getPaymentsForLearner(learner.id, learner.fullName)
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      if (!id) {
+        setLearner(null)
+        setLoadingDetail(false)
+        return
+      }
+
+      const fromList = learners.find((l) => l.id === id)
+      if (fromList) {
+        setLearner(fromList)
+        setLoadingDetail(false)
+        return
+      }
+
+      if (isApiDataProvider()) {
+        if (learnersLoading) {
+          setLoadingDetail(true)
+          return
+        }
+        setLoadingDetail(true)
+        try {
+          const item = await learnersService.get(id)
+          if (!cancelled) setLearner(item)
+        } catch {
+          if (!cancelled) setLearner(null)
+        } finally {
+          if (!cancelled) setLoadingDetail(false)
+        }
+        return
+      }
+
+      if (!cancelled) {
+        setLearner(null)
+        setLoadingDetail(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [id, learners, learnersLoading])
+
+  const [paymentHistory, setPaymentHistory] = useState<AdminPaymentItem[]>([])
+
+  useEffect(() => {
+    if (!learner) {
+      setPaymentHistory([])
+      return
+    }
+
+    // Mode API : historique reel de l'apprenant via GET /staff/payments?userId=...
+    if (isApiDataProvider()) {
+      let cancelled = false
+      const load = () => {
+        fetchStaffPayments({ userId: learner.id })
+          .then((items) => {
+            if (!cancelled) setPaymentHistory(items)
+          })
+          .catch(() => {
+            if (!cancelled) setPaymentHistory([])
+          })
+      }
+      load()
+      window.addEventListener("admin-payments-updated", load)
+      return () => {
+        cancelled = true
+        window.removeEventListener("admin-payments-updated", load)
+      }
+    }
+
+    // Mode mock : filtre local.
+    setPaymentHistory(getPaymentsForLearner(learner.id, learner.fullName))
   }, [learner, paymentsVersion])
 
   const [editOpen, setEditOpen] = useState(false)
@@ -222,6 +308,7 @@ export default function AdminApprenantFichePage() {
 
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const { feedback, close, run } = useActionFeedback()
   const [paymentDetail, setPaymentDetail] = useState<AdminPaymentItem | null>(null)
   const [pdfLoading, setPdfLoading] = useState(false)
   const [deskOpen, setDeskOpen] = useState(false)
@@ -236,40 +323,105 @@ export default function AdminApprenantFichePage() {
     setBanner(null)
   }
 
+  const editIsDirty = useMemo(() => {
+    if (!learner) return false
+    if (isApiDataProvider()) {
+      return formName.trim() !== learner.fullName.trim() || formClassId !== learner.classId
+    }
+    return (
+      formName.trim() !== learner.fullName.trim() ||
+      formPhone.trim() !== learner.phone.trim() ||
+      formClassId !== learner.classId ||
+      formDob !== (learner.dateOfBirth ?? "")
+    )
+  }, [learner, formName, formPhone, formClassId, formDob])
+
   function saveEdit() {
     if (!learner) return
     setSaving(true)
-    try {
-      if (!formName.trim()) throw new Error("Nom obligatoire")
-      if (!formPhone.trim()) throw new Error("Telephone obligatoire")
-      if (!formClassId) throw new Error("Classe obligatoire")
-      updateLearner(learner.id, {
-        fullName: formName.trim(),
-        phone: formPhone.trim(),
-        classId: formClassId,
-        dateOfBirth: formDob,
-      })
-      setBanner({ type: "success", text: "Informations mises a jour." })
-      setEditOpen(false)
-    } catch (e) {
-      setBanner({ type: "error", text: e instanceof Error ? e.message : "Erreur" })
-    } finally {
+    void (async () => {
+      const outcome = await run(
+        async () => {
+          if (!formName.trim()) throw new Error("Nom obligatoire")
+          if (!formPhone.trim()) throw new Error("Telephone obligatoire")
+          if (!formClassId) throw new Error("Classe obligatoire")
+
+          if (isApiDataProvider()) {
+            const updated = await learnersService.update(learner.id, {
+              name: formName.trim(),
+              ...(formClassId !== learner.classId ? { classId: formClassId } : {}),
+            })
+            if (!updated) throw new Error(t("lrn_fiche_edit_fail"))
+            setLearner(updated)
+            return updated
+          }
+
+          const updated = updateLearner(learner.id, {
+            fullName: formName.trim(),
+            phone: formPhone.trim(),
+            classId: formClassId,
+            dateOfBirth: formDob,
+          })
+          setLearner(updated)
+          return updated
+        },
+        {
+          loading: t("lrn_fiche_edit_saving"),
+          success: t("lrn_fiche_edit_ok"),
+          error: t("lrn_fiche_edit_fail"),
+        },
+      )
+
       setSaving(false)
-    }
+      if (outcome.ok) {
+        setEditOpen(false)
+      } else if (outcome.error instanceof Error) {
+        setBanner({
+          type: "error",
+          text: getApiErrorMessage(outcome.error, outcome.error.message),
+        })
+      }
+    })()
   }
 
   function confirmPinReset() {
     if (!learner) return
-    try {
-      const { pin, phone } = resetLearnerPin(learner.id)
-      sendLearnerPinSmsMock(phone, pin)
-      setBanner({
-        type: "success",
-        text: `SMS simule vers ${phone} avec le nouveau PIN (${pin}). En production, seul l'apprenant recevrait le code.`,
-      })
-      setPinDialogOpen(false)
-    } catch {
-      setBanner({ type: "error", text: "Impossible de reinitialiser le PIN." })
+    void (async () => {
+      try {
+        if (isApiDataProvider()) {
+          await learnersService.regeneratePassword(learner.id)
+          setBanner({
+            type: "success",
+            text: t("lrn_fiche_reset_pwd_ok"),
+          })
+        } else {
+          const { pin, phone } = resetLearnerPin(learner.id)
+          sendLearnerPinSmsMock(phone, pin)
+          setBanner({
+            type: "success",
+            text: t("lrn_fiche_reset_pwd_ok"),
+          })
+        }
+        setPinDialogOpen(false)
+      } catch (e) {
+        setBanner({
+          type: "error",
+          text: getApiErrorMessage(e, t("lrn_fiche_reset_pwd_err")),
+        })
+      }
+    })()
+  }
+
+  async function openPaymentDetail(p: AdminPaymentItem) {
+    setPaymentDetail(p)
+    // Mode API : on rafraichit la ligne via GET /staff/payments/:id (statut a jour).
+    if (isApiDataProvider()) {
+      try {
+        const fresh = await getStaffPaymentById(p.id)
+        if (fresh) setPaymentDetail(fresh)
+      } catch {
+        // On garde la ligne issue de la liste si le detail echoue.
+      }
     }
   }
 
@@ -290,18 +442,40 @@ export default function AdminApprenantFichePage() {
 
   function confirmStatusChange() {
     if (!learner || !pendingStatus) return
-    try {
-      setLearnerStatus(learner.id, pendingStatus)
-      setBanner({
-        type: "success",
-        text: pendingStatus === "active" ? "Compte active." : "Compte suspendu.",
-      })
-    } catch {
-      setBanner({ type: "error", text: "Impossible de modifier le statut." })
-    } finally {
-      setStatusDialogOpen(false)
-      setPendingStatus(null)
-    }
+    const nextStatus = pendingStatus
+    void (async () => {
+      try {
+        if (isApiDataProvider()) {
+          const updated = await learnersService.setActive(learner.id, nextStatus === "active")
+          if (updated) setLearner(updated)
+          else setLearner({ ...learner, status: nextStatus })
+        } else {
+          setLearnerStatus(learner.id, nextStatus)
+          setLearner({ ...learner, status: nextStatus })
+        }
+        setBanner({
+          type: "success",
+          text: nextStatus === "active" ? "Compte active." : "Compte suspendu.",
+        })
+      } catch (e) {
+        setBanner({
+          type: "error",
+          text: getApiErrorMessage(e, "Impossible de modifier le statut."),
+        })
+      } finally {
+        setStatusDialogOpen(false)
+        setPendingStatus(null)
+      }
+    })()
+  }
+
+  if (loadingDetail) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-10 text-sm text-muted-foreground md:px-6">
+        <Loader2 className="size-4 animate-spin" />
+        {t("adm_set_loading")}
+      </div>
+    )
   }
 
   if (!learner) {
@@ -316,9 +490,28 @@ export default function AdminApprenantFichePage() {
     )
   }
 
-  const cls = getClassById(learner.classId)
-  const ratio = learner.due > 0 ? Math.min(100, Math.round((learner.paid / learner.due) * 100)) : 100
-  const reste = Math.max(0, learner.due - learner.paid)
+  const adminClass =
+    adminClasses.find((c) => c.id === learner?.classId) ??
+    (!isApiDataProvider() ? getClassById(learner?.classId ?? "") : undefined)
+  const classLabel =
+    learner?.className ||
+    adminClass?.name ||
+    (!isApiDataProvider() ? getClassById(learner?.classId ?? "")?.name : "") ||
+    learner?.classId ||
+    ""
+  const dueAmount =
+    learner && learner.due > 0
+      ? learner.due
+      : (adminClass?.tuitionAmount ?? 0)
+  // En mode API, /staff/users/:id ne renvoie pas le total deja paye : on le
+  // derive des paiements reels (encaisses : reussis + versements guichet).
+  const paidAmount = isApiDataProvider()
+    ? paymentHistory
+        .filter((p) => p.status === "success" || p.status === "manual")
+        .reduce((sum, p) => sum + p.amount, 0)
+    : (learner?.paid ?? 0)
+  const ratio = dueAmount > 0 ? Math.min(100, Math.round((paidAmount / dueAmount) * 100)) : 0
+  const reste = Math.max(0, dueAmount - paidAmount)
 
   return (
     <div className="px-4 pb-10 pt-4 md:px-6 lg:px-8">
@@ -360,7 +553,7 @@ export default function AdminApprenantFichePage() {
               </Button>
               <Button size="sm" variant="outline" onClick={() => setPinDialogOpen(true)}>
                 <KeyRound className="mr-2 size-3.5" />
-                Reinitialiser PIN
+                {t("lrn_fiche_reset_pwd_btn")}
               </Button>
               {reste > 0 ? (
                 <Button size="sm" onClick={() => setDeskOpen(true)}>
@@ -412,15 +605,15 @@ export default function AdminApprenantFichePage() {
               <GraduationCap className="size-4 text-muted-foreground" />
               <dt className="text-muted-foreground">Classe</dt>
               <dd>
-                {cls ? (
+                {learner.classId ? (
                   <Link
-                    href={`/dashboard/admin/classes/${cls.id}/edit`}
+                    href={`/dashboard/admin/classes/${learner.classId}`}
                     className="font-medium text-primary underline-offset-4 hover:underline"
                   >
-                    {cls.name}
+                    {classLabel}
                   </Link>
                 ) : (
-                  learner.classId
+                  classLabel
                 )}
               </dd>
             </div>
@@ -445,11 +638,11 @@ export default function AdminApprenantFichePage() {
           <div className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Du</span>
-              <span className="font-semibold tabular-nums">{formatFcfa(learner.due)}</span>
+              <span className="font-semibold tabular-nums">{formatFcfa(dueAmount)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Paye</span>
-              <span className="font-semibold tabular-nums text-emerald-700">{formatFcfa(learner.paid)}</span>
+              <span className="font-semibold tabular-nums text-emerald-700">{formatFcfa(paidAmount)}</span>
             </div>
             <div className="flex justify-between border-t pt-2">
               <span className="text-muted-foreground">Reste</span>
@@ -461,7 +654,9 @@ export default function AdminApprenantFichePage() {
                 style={{ width: `${ratio}%` }}
               />
             </div>
-            <p className="text-xs text-muted-foreground">{ratio}% du du regle</p>
+            <p className="text-xs text-muted-foreground">
+              {dueAmount > 0 ? `${ratio}% du montant regle` : "Pension de classe non renseignee"}
+            </p>
           </div>
         </div>
       </div>
@@ -511,7 +706,7 @@ export default function AdminApprenantFichePage() {
                     <TableCell>{p.method}</TableCell>
                     <TableCell>{payStatusBadge(p)}</TableCell>
                     <TableCell className="text-right">
-                      <Button type="button" size="sm" variant="outline" onClick={() => setPaymentDetail(p)}>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void openPaymentDetail(p)}>
                         <Eye className="mr-1 size-3.5" />
                         Voir
                       </Button>
@@ -542,7 +737,7 @@ export default function AdminApprenantFichePage() {
                   variant="secondary"
                   size="sm"
                   className="mt-3 w-full"
-                  onClick={() => setPaymentDetail(p)}
+                  onClick={() => void openPaymentDetail(p)}
                 >
                   <Eye className="mr-2 size-3.5" />
                   Detail et recu PDF
@@ -630,7 +825,11 @@ export default function AdminApprenantFichePage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Modifier l&apos;apprenant</DialogTitle>
-            <DialogDescription>Mise a jour locale (mock admin). Les paiements affichent le meme nom.</DialogDescription>
+            <DialogDescription>
+              {isApiDataProvider()
+                ? "Nom et classe modifiables. Le telephone ne peut pas etre change apres creation."
+                : "Mise a jour locale (mock admin). Les paiements affichent le meme nom."}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="space-y-1.5">
@@ -639,7 +838,14 @@ export default function AdminApprenantFichePage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-phone">Telephone</Label>
-              <Input id="edit-phone" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
+              <Input
+                id="edit-phone"
+                value={formPhone}
+                onChange={(e) => setFormPhone(e.target.value)}
+                readOnly={isApiDataProvider()}
+                disabled={isApiDataProvider()}
+                className={isApiDataProvider() ? "bg-muted" : undefined}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Classe</Label>
@@ -665,8 +871,15 @@ export default function AdminApprenantFichePage() {
             <Button variant="outline" onClick={() => setEditOpen(false)}>
               Annuler
             </Button>
-            <Button onClick={saveEdit} disabled={saving}>
-              {saving ? "..." : "Enregistrer"}
+            <Button onClick={saveEdit} disabled={saving || !editIsDirty}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  {t("lrn_fiche_edit_saving")}
+                </>
+              ) : (
+                "Enregistrer"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -675,16 +888,14 @@ export default function AdminApprenantFichePage() {
       <AlertDialog open={pinDialogOpen} onOpenChange={setPinDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reinitialiser le PIN ?</AlertDialogTitle>
+            <AlertDialogTitle>{t("lrn_fiche_reset_pwd_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Un nouveau code a 6 chiffres sera genere. En simulation, un SMS est journalise vers le numero{" "}
-              <span className="font-mono font-medium text-foreground">{learner.phone}</span> (voir aussi la console
-              developpeur). L&apos;apprenant devra changer son PIN a la prochaine connexion.
+              {t("lrn_fiche_reset_pwd_desc").replace("{phone}", learner.phone)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmPinReset}>Confirmer et envoyer (simulation)</AlertDialogAction>
+            <AlertDialogCancel>{t("adm_usr_cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmPinReset}>{t("lrn_fiche_reset_pwd_confirm")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -698,7 +909,7 @@ export default function AdminApprenantFichePage() {
             <AlertDialogDescription>
               {pendingStatus === "suspended"
                 ? "L'apprenant ne pourra plus se connecter tant que le compte reste suspendu."
-                : "Le compte redeviendra accessible immediatement (donnees mock)."}
+                : "Le compte redeviendra accessible immediatement."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -714,10 +925,29 @@ export default function AdminApprenantFichePage() {
         onSuccess={() => setBanner({ type: "success", text: "Versement enregistre." })}
         fullName={learner.fullName}
         remaining={reste}
-        onRecord={(amount, method, note) => {
-          recordAdminDeskPayment(learner.id, amount, method, note)
+        onRecord={async (amount, method, note) => {
+          if (!Number.isFinite(amount) || amount <= 0) throw new Error("INVALID_AMOUNT")
+          if (amount > reste) throw new Error("OVERPAY")
+          if (isApiDataProvider()) {
+            await recordManualPayment({
+              userId: learner.id,
+              classId: learner.classId,
+              amount,
+              note,
+            })
+          } else {
+            recordAdminDeskPayment(learner.id, amount, method, note)
+          }
         }}
         t={t}
+      />
+
+      <ActionFeedbackOverlay
+        open={feedback.open}
+        status={feedback.status}
+        message={feedback.message}
+        closeLabel={t("action_feedback_ok")}
+        onClose={close}
       />
     </div>
   )

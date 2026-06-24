@@ -3,13 +3,16 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import type { ReactNode } from "react"
-import { Wallet, HandCoins, BarChart3, CreditCard, TrendingDown, PiggyBank, CircleDollarSign } from "lucide-react"
+import { Wallet, HandCoins, BarChart3, CreditCard, TrendingDown, TrendingUp, PiggyBank, CircleDollarSign, Receipt } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { AdminKpiCard } from "@/components/admin/admin-kpi-card"
+import { AdminKpiCompactTile } from "@/components/admin/admin-kpi-compact-tile"
 import { ManagerPeriodFilter } from "@/components/manager/manager-period-filter"
-import { formatFcfa } from "@/services/admin-mock.service"
 import { FinanceProvider, useFinanceContext } from "./finance-context"
 import { useLocale } from "@/hooks/use-locale"
+
+function fcfaNumber(value: number): string {
+  return new Intl.NumberFormat("fr-FR").format(value)
+}
 
 function FinanceShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -30,6 +33,7 @@ function FinanceShell({ children }: { children: ReactNode }) {
     { href: "/dashboard/admin/finances/comptes-tresorerie", label: t("fin_nav_treasury"), icon: Wallet },
     { href: "/dashboard/admin/finances/affectation-manager", label: t("fin_nav_mgr"), icon: HandCoins },
     { href: "/dashboard/admin/finances/paiements-managers", label: t("fin_nav_mgr_pay"), icon: CreditCard },
+    { href: "/dashboard/admin/finances/depenses-managers", label: t("fin_nav_mgr_expenses"), icon: Receipt },
     { href: "/dashboard/admin/finances/depenses-extraordinaires", label: t("fin_nav_extra"), icon: TrendingDown },
     { href: "/dashboard/admin/finances/vue-consolidee", label: t("fin_nav_consolidated"), icon: BarChart3 },
   ]
@@ -50,41 +54,57 @@ function FinanceShell({ children }: { children: ReactNode }) {
           />
         }
       />
-      <div className="mt-3 rounded-2xl border bg-card/85 p-3 shadow-sm sm:p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <AdminKpiCard
-            label={t("fin_kpi_theoretical")}
-            value={formatFcfa(consolidatedTheoretical)}
-            icon={<CircleDollarSign className="size-5" />}
-            tone="violet"
-            featured
-          />
-          <AdminKpiCard
-            label={t("fin_kpi_real")}
-            value={formatFcfa(consolidatedRealRemaining)}
-            icon={<PiggyBank className="size-5" />}
-            tone="success"
-            featured
-          />
-        </div>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.06] px-2.5 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("fin_kpi_in")}</p>
-            <p className="mt-0.5 text-sm font-bold tabular-nums">{formatFcfa(inflowTotal)}</p>
-          </div>
-          <div className="rounded-xl border border-amber-500/15 bg-amber-500/[0.06] px-2.5 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("fin_kpi_mgr")}</p>
-            <p className="mt-0.5 text-sm font-bold tabular-nums">{formatFcfa(managerOut)}</p>
-          </div>
-          <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.06] px-2.5 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("fin_kpi_extra")}</p>
-            <p className="mt-0.5 text-sm font-bold tabular-nums">{formatFcfa(extraOut)}</p>
-          </div>
-          <div className="rounded-xl border border-violet-500/15 bg-violet-500/[0.06] px-2.5 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("fin_kpi_mgr_remaining")}</p>
-            <p className="mt-0.5 text-sm font-bold tabular-nums">{formatFcfa(managerRemainingReal)}</p>
-          </div>
-        </div>
+      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+        <AdminKpiCompactTile
+          icon={<CircleDollarSign className="size-5" />}
+          label={t("fin_kpi_theoretical")}
+          value={fcfaNumber(consolidatedTheoretical)}
+          unit="FCFA"
+          hint={t("fin_kpi_theoretical_hint")}
+          info={t("fin_kpi_theoretical")}
+          tone="violet"
+        />
+        <AdminKpiCompactTile
+          icon={<PiggyBank className="size-5" />}
+          label={t("fin_kpi_real")}
+          value={fcfaNumber(consolidatedRealRemaining)}
+          unit="FCFA"
+          hint={t("fin_kpi_real_hint")}
+          info={t("fin_kpi_real")}
+          tone="emerald"
+        />
+        <AdminKpiCompactTile
+          icon={<TrendingUp className="size-5" />}
+          label={t("fin_kpi_in")}
+          value={fcfaNumber(inflowTotal)}
+          unit="FCFA"
+          hint={t("fin_kpi_in_hint")}
+          tone="sky"
+        />
+        <AdminKpiCompactTile
+          icon={<CreditCard className="size-5" />}
+          label={t("fin_kpi_mgr")}
+          value={fcfaNumber(managerOut)}
+          unit="FCFA"
+          hint={t("fin_kpi_mgr_hint")}
+          tone="amber"
+        />
+        <AdminKpiCompactTile
+          icon={<TrendingDown className="size-5" />}
+          label={t("fin_kpi_extra")}
+          value={fcfaNumber(extraOut)}
+          unit="FCFA"
+          hint={t("fin_kpi_extra_hint")}
+          tone="rose"
+        />
+        <AdminKpiCompactTile
+          icon={<Wallet className="size-5" />}
+          label={t("fin_kpi_mgr_remaining")}
+          value={fcfaNumber(managerRemainingReal)}
+          unit="FCFA"
+          hint={t("fin_kpi_mgr_remaining_hint")}
+          tone="violet"
+        />
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
         <section>{children}</section>

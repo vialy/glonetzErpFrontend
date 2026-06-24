@@ -8,6 +8,8 @@ export interface ManagerLearnerPayment {
   note?: string
 }
 
+export type ManagedLearnerStatus = "active" | "suspended"
+
 export interface ManagedLearner {
   id: string
   fullName: string
@@ -17,6 +19,7 @@ export interface ManagedLearner {
   tuitionDue: number
   currencyCode: string
   enrolledAt: string
+  status?: ManagedLearnerStatus
   notes?: string
   payments: ManagerLearnerPayment[]
 }

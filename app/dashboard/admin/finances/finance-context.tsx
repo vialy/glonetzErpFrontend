@@ -40,11 +40,22 @@ export type FinanceOperation = {
   failureReason?: string
 }
 
+type ManagerWalletSnapshot = {
+  managerId: string
+  fullName: string
+  allocated: number
+  spent: number
+  remaining: number
+}
+
 type FinanceContextValue = {
   wallets: TreasuryWallet[]
   operations: FinanceOperation[]
   managers: { id: string; fullName: string }[]
   managerAppBalances: Record<string, number>
+  managerWalletSnapshots: ManagerWalletSnapshot[]
+  getManagerExpenses: (managerId: string) => ReturnType<typeof ManagerWalletService.getExpenses>
+  getManagerSummary: (managerId: string) => ReturnType<typeof ManagerWalletService.getSummary>
   activeWalletId: string
   setActiveWalletId: (id: string) => void
   periodFilter: ManagerPeriodFilterValue
@@ -103,7 +114,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   ])
   const [activeWalletId, setActiveWalletId] = useState("w-tuition")
   const [periodFilter, setPeriodFilter] = useState<ManagerPeriodFilterValue>(defaultManagerPeriodFilter)
-  const [managerAppBalances, setManagerAppBalances] = useState<Record<string, number>>({})
   const [managerWalletTick, setManagerWalletTick] = useState(0)
   const managers = useMemo(
     () =>
@@ -144,15 +154,38 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     () => extraOutSeed + operations.filter((o) => o.type === "extra_expense").reduce((sum, o) => sum + o.amount, 0),
     [operations, extraOutSeed]
   )
-  const managerBudgetSummary = useMemo(() => ManagerWalletService.getSummary(), [managerWalletTick])
-  const filteredManagerAllocations = useMemo(
-    () => ManagerWalletService.getAllocations().filter((a) => isIsoDateInPeriod(a.allocatedAt, periodRange)),
-    [managerWalletTick, periodRange]
+  const managerBudgetSummary = useMemo(() => ManagerWalletService.getGlobalSummary(), [managerWalletTick, managers])
+  const filteredManagerAllocations = useMemo(() => {
+    const all = managers.flatMap((m) => ManagerWalletService.getAllocations(m.id))
+    return all.filter((a) => isIsoDateInPeriod(a.allocatedAt, periodRange))
+  }, [managerWalletTick, periodRange, managers])
+  const filteredManagerExpenses = useMemo(() => {
+    const all = ManagerWalletService.getAllExpenses()
+    return all.filter((e) => isIsoDateInPeriod(e.spentAt, periodRange))
+  }, [managerWalletTick, periodRange])
+
+  const managerWalletSnapshots = useMemo(
+    (): ManagerWalletSnapshot[] =>
+      managers.map((m) => {
+        const s = ManagerWalletService.getSummary(m.id)
+        return {
+          managerId: m.id,
+          fullName: m.fullName,
+          allocated: s.envelopeCeiling,
+          spent: s.totalSpent,
+          remaining: s.remaining,
+        }
+      }),
+    [managers, managerWalletTick],
   )
-  const filteredManagerExpenses = useMemo(
-    () => ManagerWalletService.getExpenses().filter((e) => isIsoDateInPeriod(e.spentAt, periodRange)),
-    [managerWalletTick, periodRange]
-  )
+
+  const managerAppBalances = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const snap of managerWalletSnapshots) {
+      out[snap.managerId] = snap.remaining
+    }
+    return out
+  }, [managerWalletSnapshots])
 
   const periodInflow = useMemo(
     () => filteredOperations.filter((o) => o.type === "inflow").reduce((sum, o) => sum + o.amount, 0),
@@ -186,9 +219,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const consolidatedTheoretical = periodFilterApplied ? periodInflow - periodManagerOut - periodExtraOut : totalBalance
   const consolidatedRealRemaining = consolidatedTheoretical + managerRemainingReal
 
-  function registerManagerAllocationInWallet(amount: number, label: string) {
+  function registerManagerAllocationInWallet(managerId: string, amount: number, label: string) {
     try {
-      ManagerWalletService.registerAdminAllocation({ amount, note: label })
+      ManagerWalletService.registerAdminAllocation(managerId, { amount, note: label })
       setManagerWalletTick((prev) => prev + 1)
     } catch {
       // Ne pas bloquer le flux admin si la synchronisation manager echoue localement.
@@ -285,9 +318,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         )
       )
       if (op.managerId) {
-        setManagerAppBalances((prev) => ({ ...prev, [op.managerId!]: (prev[op.managerId!] ?? 0) + op.amount }))
+        registerManagerAllocationInWallet(op.managerId, op.amount, op.label)
       }
-      registerManagerAllocationInWallet(op.amount, op.label)
     }
 
     return { ok: true }
@@ -323,9 +355,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       )
     )
     if (op.managerId) {
-      setManagerAppBalances((prev) => ({ ...prev, [op.managerId!]: (prev[op.managerId!] ?? 0) + op.amount }))
+      registerManagerAllocationInWallet(op.managerId, op.amount, op.label)
     }
-    registerManagerAllocationInWallet(op.amount, op.label)
     return { ok: true }
   }
 
@@ -360,6 +391,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         operations,
         managers,
         managerAppBalances,
+        managerWalletSnapshots,
+        getManagerExpenses: (managerId: string) => ManagerWalletService.getExpenses(managerId),
+        getManagerSummary: (managerId: string) => ManagerWalletService.getSummary(managerId),
         activeWalletId,
         setActiveWalletId,
         periodFilter,

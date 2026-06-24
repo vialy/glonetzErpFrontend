@@ -8,11 +8,6 @@ const TreasuryContent = dynamic(
   { loading: () => <DashboardSkeleton /> },
 )
 
-const StudentDashboard = dynamic(
-  () => import("@/components/student-dashboard").then((m) => m.StudentDashboard),
-  { loading: () => <DashboardSkeleton /> },
-)
-
 const AccountantDashboard = dynamic(
   () => import("@/components/accountant-dashboard").then((m) => m.AccountantDashboard),
   { loading: () => <DashboardSkeleton /> },
@@ -39,10 +34,6 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const { role } = useAuth()
-
-  if (role === "student") {
-    return <StudentDashboard />
-  }
 
   if (role === "accountant") {
     return <AccountantDashboard />

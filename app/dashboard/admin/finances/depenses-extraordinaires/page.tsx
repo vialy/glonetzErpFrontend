@@ -18,7 +18,11 @@ type ExtraRow = {
 
 export default function DepensesExtraordinairesPage() {
   const { t } = useLocale()
-  const { operations, wallets } = useFinanceContext()
+  const { operations, wallets, addExtraExpense } = useFinanceContext()
+  const [extraWalletId, setExtraWalletId] = useState(wallets[0]?.id ?? "")
+  const [extraLabel, setExtraLabel] = useState("")
+  const [extraAmount, setExtraAmount] = useState("")
+  const extraWallet = wallets.find((wallet) => wallet.id === extraWalletId)
   const [walletFilter, setWalletFilter] = useState("all")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
@@ -151,6 +155,69 @@ export default function DepensesExtraordinairesPage() {
                 : t("fin_extra_period_none")}
             </p>
           </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+        <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-3 text-white">
+          <p className="text-sm font-semibold">{t("fin_alloc_extra_title")}</p>
+          <p className="mt-0.5 text-xs text-white/90">{t("fin_alloc_extra_sub")}</p>
+        </div>
+        <div className="p-3 sm:p-4">
+          <div className="mb-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs">
+            <p className="text-muted-foreground">{t("fin_alloc_available")}</p>
+            <p className="mt-0.5 font-semibold text-foreground">{formatFcfa(extraWallet?.currentBalance ?? 0)}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block text-xs font-medium text-muted-foreground sm:col-span-2">
+              {t("fin_alloc_wallet_src")}
+              <select
+                value={extraWalletId}
+                onChange={(e) => setExtraWalletId(e.target.value)}
+                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
+              >
+                {wallets.map((wallet) => (
+                  <option key={wallet.id} value={wallet.id}>
+                    {wallet.name} ({formatFcfa(wallet.currentBalance)})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-medium text-muted-foreground">
+              {t("fin_alloc_motif")}
+              <input
+                value={extraLabel}
+                onChange={(e) => setExtraLabel(e.target.value)}
+                placeholder={t("fin_alloc_extra_motif_ph")}
+                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs font-medium text-muted-foreground">
+              {t("fin_alloc_amount")}
+              <input
+                value={extraAmount}
+                onChange={(e) => setExtraAmount(e.target.value)}
+                type="number"
+                placeholder={t("fin_alloc_amount_ph")}
+                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <button
+            onClick={() => {
+              const result = addExtraExpense(extraWalletId, extraLabel, Number(extraAmount))
+              if (!result.ok) {
+                toast({ title: t("fin_alloc_extra_toast_refuse"), description: result.reason, variant: "destructive" })
+                return
+              }
+              setExtraLabel("")
+              setExtraAmount("")
+              toast({ title: t("fin_alloc_extra_toast_ok_title"), description: t("fin_alloc_extra_toast_ok_desc") })
+            }}
+            className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground sm:w-auto"
+          >
+            <TrendingDown className="size-4" /> {t("fin_alloc_extra_btn")}
+          </button>
         </div>
       </div>
 

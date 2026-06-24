@@ -12,7 +12,7 @@ export function FloatingActions() {
   const router = useRouter()
   const { startLoading } = useRouteLoader()
 
-  if (role === "accountant" || role === "student") {
+  if (role === "accountant") {
     return null
   }
 
@@ -22,7 +22,7 @@ export function FloatingActions() {
         <button
           type="button"
           onClick={() => {
-            startLoading()
+            startLoading("/dashboard/manager/depenses/nouvelle")
             router.push("/dashboard/manager/depenses/nouvelle")
           }}
           className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40 hover:-translate-y-0.5 active:scale-95"

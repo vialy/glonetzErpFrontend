@@ -7,6 +7,7 @@ import { claimsService, type ClaimRecord } from "@/domains/claims"
 import { useLocale } from "@/hooks/use-locale"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { formatFcfa } from "@/lib/audit-date-range"
 
 function formatDate(value: string) {
@@ -29,9 +30,16 @@ function statusBadge(status: ClaimRecord["status"], t: (k: import("@/services/i1
 export default function ComptableReclamationsPage() {
   const { t } = useLocale()
   const [claims, setClaims] = useState<ClaimRecord[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const refresh = async () => setClaims(await claimsService.getAll())
+    const refresh = async () => {
+      try {
+        setClaims(await claimsService.getAll())
+      } finally {
+        setLoading(false)
+      }
+    }
     void refresh()
     window.addEventListener("claims-updated", refresh)
     return () => window.removeEventListener("claims-updated", refresh)
@@ -53,7 +61,15 @@ export default function ComptableReclamationsPage() {
         </div>
       </header>
 
-      {sorted.length === 0 ? (
+      {loading ? (
+        <ul className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <li key={`sk-${i}`}>
+              <Skeleton className="h-44 w-full rounded-2xl" />
+            </li>
+          ))}
+        </ul>
+      ) : sorted.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 px-4 py-14 text-center text-sm text-muted-foreground">
           {t("acc_empty")}
         </div>

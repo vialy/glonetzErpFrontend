@@ -1,9 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { ArrowDownLeft, Building2, Clock3, Landmark, PiggyBank, TrendingDown, Wallet } from "lucide-react"
-import { ManagerWalletService } from "@/domains/manager-wallet"
-import type { ManagerBudgetAllocation, ManagerBudgetSummary } from "@/domains/manager-wallet/types"
+import { useManagerWallet } from "@/hooks/use-manager-wallet"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { ManagerPeriodFilter } from "@/components/manager/manager-period-filter"
 import { MobileBackButton } from "@/components/mobile-back-button"
@@ -52,19 +51,8 @@ function KpiCard({
 
 export default function ManagerBudgetPage() {
   const { t, locale } = useLocale()
-  const [summary, setSummary] = useState<ManagerBudgetSummary | null>(null)
-  const [allocations, setAllocations] = useState<ManagerBudgetAllocation[]>([])
+  const { summary, allocations } = useManagerWallet()
   const [period, setPeriod] = useState<ManagerPeriodFilterValue>(() => defaultManagerPeriodFilter())
-
-  useEffect(() => {
-    const refresh = () => {
-      setSummary(ManagerWalletService.getSummary())
-      setAllocations(ManagerWalletService.getAllocations())
-    }
-    refresh()
-    window.addEventListener("manager-wallet-updated", refresh)
-    return () => window.removeEventListener("manager-wallet-updated", refresh)
-  }, [])
 
   const range = useMemo(() => computePeriodRange(period), [period])
 

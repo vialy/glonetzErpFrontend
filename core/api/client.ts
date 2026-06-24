@@ -1,25 +1,56 @@
 "use client"
 
-export interface ApiRequestOptions extends RequestInit {
+import { SESSION_KEY } from "@/services/auth.service"
+import { handleSessionUnauthorized, isSessionUnauthorizedError } from "@/core/api/unauthorized"
+
+export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
   query?: Record<string, string | number | boolean | undefined | null>
+  body?: unknown
+  /** Skip `{ success, data }` unwrapping (rare). */
+  raw?: boolean
 }
 
 export class ApiClientError extends Error {
   status: number
   payload: unknown
+  errorCode?: number
 
-  constructor(message: string, status: number, payload: unknown) {
+  constructor(message: string, status: number, payload: unknown, errorCode?: number) {
     super(message)
     this.name = "ApiClientError"
     this.status = status
     this.payload = payload
+    this.errorCode = errorCode
   }
 }
 
+export type ApiEnvelope<T> = {
+  success: boolean
+  data: T | null
+  errorMsg?: string | null
+  errorCode?: number | null
+}
+
+function isApiEnvelope(value: unknown): value is ApiEnvelope<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "success" in value &&
+    "data" in value
+  )
+}
+
+function normalizeApiPath(path: string) {
+  const normalized = path.startsWith("/") ? path : `/${path}`
+  return normalized.startsWith("/api/") ? normalized : `/api${normalized}`
+}
+
 function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? ""
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`
-  const url = new URL(`${baseUrl}${normalizedPath}`, typeof window !== "undefined" ? window.location.origin : "http://localhost")
+  const baseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "")
+  if (!baseUrl) {
+    throw new ApiClientError("NEXT_PUBLIC_API_BASE_URL is not configured", 0, null)
+  }
+  const url = new URL(`${baseUrl}${normalizeApiPath(path)}`)
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === null) continue
@@ -31,7 +62,7 @@ function buildUrl(path: string, query?: ApiRequestOptions["query"]) {
 
 function getAuthToken() {
   if (typeof document === "undefined") return null
-  const match = document.cookie.match(/(^| )glonetz_session=([^;]+)/)
+  const match = document.cookie.match(new RegExp(`(^| )${SESSION_KEY}=([^;]+)`))
   if (!match) return null
   try {
     const parsed = JSON.parse(decodeURIComponent(match[2])) as { token?: string }
@@ -41,18 +72,26 @@ function getAuthToken() {
   }
 }
 
+function getLanguageHeader(): string {
+  if (typeof document === "undefined") return "fr"
+  const match = document.cookie.match(/(?:^|;\s*)glonetz_locale=([^;]+)/)
+  return match?.[1] === "en" ? "en" : "fr"
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { query, headers, body, ...rest } = options
+  const { query, headers, body, raw, ...rest } = options
   const token = getAuthToken()
-  const contentTypeHeader = body instanceof FormData ? {} : { "Content-Type": "application/json" }
+  const hadToken = Boolean(token)
+  const requestHeaders: Record<string, string> = {
+    "x-language": getLanguageHeader(),
+    ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(headers as Record<string, string> | undefined),
+  }
 
   const response = await fetch(buildUrl(path, query), {
     ...rest,
-    headers: {
-      ...contentTypeHeader,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
+    headers: requestHeaders,
     body:
       body instanceof FormData
         ? body
@@ -64,10 +103,50 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const contentType = response.headers.get("content-type") ?? ""
   const payload = contentType.includes("application/json") ? await response.json() : await response.text()
 
+  const maybeHandleUnauthorized = (status: number, message?: string, errorCode?: number) => {
+    if (
+      isSessionUnauthorizedError(path, {
+        status,
+        errorCode,
+        message,
+        hadToken,
+      })
+    ) {
+      handleSessionUnauthorized()
+    }
+  }
+
   if (!response.ok) {
+    const message =
+      typeof payload === "object" && payload !== null && "errorMsg" in payload
+        ? String((payload as ApiEnvelope<unknown>).errorMsg ?? "")
+        : undefined
+    const errorCode =
+      typeof payload === "object" && payload !== null && "errorCode" in payload
+        ? Number((payload as ApiEnvelope<unknown>).errorCode ?? NaN)
+        : undefined
+    maybeHandleUnauthorized(response.status, message, Number.isFinite(errorCode) ? errorCode : undefined)
     throw new ApiClientError("API request failed", response.status, payload)
+  }
+
+  if (raw) return payload as T
+
+  if (isApiEnvelope(payload)) {
+    if (!payload.success) {
+      maybeHandleUnauthorized(
+        response.status,
+        payload.errorMsg?.trim() || undefined,
+        payload.errorCode ?? undefined,
+      )
+      throw new ApiClientError(
+        payload.errorMsg?.trim() || "API request failed",
+        response.status,
+        payload,
+        payload.errorCode ?? undefined,
+      )
+    }
+    return payload.data as T
   }
 
   return payload as T
 }
-

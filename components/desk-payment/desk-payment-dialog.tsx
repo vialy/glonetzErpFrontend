@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Loader2 } from "lucide-react"
 import type { ManagerRecordedPaymentMethod } from "@/domains/manager-learners/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,8 +26,8 @@ export type DeskPaymentDialogProps = {
   onSuccess: () => void
   fullName: string
   remaining: number
-  /** Enregistre le versement ; doit lever `Error` avec message `OVERPAY` ou `INVALID_AMOUNT` si besoin. */
-  onRecord: (amount: number, method: ManagerRecordedPaymentMethod, note?: string) => void
+  /** Enregistre le versement ; doit lever `Error` avec message `OVERPAY` ou `INVALID_AMOUNT` si besoin. Peut etre asynchrone. */
+  onRecord: (amount: number, method: ManagerRecordedPaymentMethod, note?: string) => void | Promise<void>
   t: DeskPaymentTranslate
 }
 
@@ -44,6 +45,7 @@ export function DeskPaymentDialog({
   const [method, setMethod] = useState<ManagerRecordedPaymentMethod>("cash")
   const [note, setNote] = useState("")
   const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -51,20 +53,25 @@ export function DeskPaymentDialog({
       setNote("")
       setMethod("cash")
       setErr(null)
+      setSaving(false)
     }
   }, [open, fullName])
 
-  function submit() {
+  async function submit() {
     setErr(null)
+    setSaving(true)
     try {
       const n = Number(amount)
-      onRecord(n, method, note.trim() || undefined)
+      await onRecord(n, method, note.trim() || undefined)
       onSuccess()
       onClose()
     } catch (e) {
       const c = e instanceof Error ? e.message : ""
       if (c === "OVERPAY") setErr(t("mgr_err_overpay"))
-      else setErr(t("mgr_err_amount"))
+      else if (c === "INVALID_AMOUNT" || !c) setErr(t("mgr_err_amount"))
+      else setErr(c)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -104,13 +111,15 @@ export function DeskPaymentDialog({
           {err ? <p className="text-sm text-destructive">{err}</p> : null}
         </div>
         <DialogFooter className="gap-2 border-t bg-muted/30 px-5 py-4 sm:gap-0">
-          <Button variant="outline" className="rounded-xl" onClick={onClose}>
+          <Button variant="outline" className="rounded-xl" onClick={onClose} disabled={saving}>
             {t("btn_cancel")}
           </Button>
           <Button
             className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500"
-            onClick={submit}
+            onClick={() => void submit()}
+            disabled={saving}
           >
+            {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
             {t("mgr_desk_save")}
           </Button>
         </DialogFooter>

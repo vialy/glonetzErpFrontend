@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation"
 import { useMemo, useState } from "react"
 import { ArrowLeft, CalendarRange, Save, School, Sparkles } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { MobileBackButton } from "@/components/mobile-back-button"
-import { addAdminClass } from "@/services/admin-mock.service"
+import { classesService } from "@/domains/classes"
+import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useLocale } from "@/hooks/use-locale"
 import { deriveClassSession } from "@/lib/class-session"
 
@@ -25,7 +27,8 @@ export default function NouvelleClassePage() {
   const [periodEnd, setPeriodEnd] = useState("")
   const [tuition, setTuition] = useState("")
   const [submitting, setSubmitting] = useState(false)
-  const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
+  const [showErrors, setShowErrors] = useState(false)
+  const { feedback, close, run } = useActionFeedback()
 
   const derivedSession = useMemo(
     () => deriveClassSession(periodStart, periodEnd, locale === "en" ? "en" : "fr"),
@@ -44,30 +47,33 @@ export default function NouvelleClassePage() {
     return list
   }, [name, description, periodStart, periodEnd, tuition, t])
 
-  function submit() {
-    if (errors.length > 0) {
-      setMessage({ type: "err", text: errors[0] })
-      return
-    }
+  async function submit() {
+    setShowErrors(true)
+    if (errors.length > 0) return
     setSubmitting(true)
-    setMessage(null)
-    try {
-      const amount = Number(tuition)
-      const created = addAdminClass({
-        name: name.trim(),
-        description: description.trim(),
-        periodStart,
-        periodEnd,
-        status: "active",
-        tuitionAmount: amount,
-        locale: locale === "en" ? "en" : "fr",
-      })
-      setMessage({ type: "ok", text: t("adm_class_new_ok").replace("{name}", created.name) })
-      setTimeout(() => router.push(`/dashboard/admin/classes/${created.id}`), 600)
-    } catch {
-      setMessage({ type: "err", text: t("adm_class_new_fail") })
-    } finally {
-      setSubmitting(false)
+    const amount = Number(tuition)
+    const outcome = await run(
+      () =>
+        classesService.create({
+          name: name.trim(),
+          description: description.trim(),
+          periodStart,
+          periodEnd,
+          tuitionAmount: amount,
+          locale: locale === "en" ? "en" : "fr",
+        }),
+      {
+        loading: t("adm_class_new_creating"),
+        success: (created) => t("adm_class_new_ok").replace("{name}", created.name),
+        error: t("adm_class_new_fail"),
+      },
+    )
+    setSubmitting(false)
+    if (outcome.ok) {
+      window.setTimeout(() => {
+        close()
+        router.push(`/dashboard/admin/classes/${outcome.result.id}`)
+      }, 900)
     }
   }
 
@@ -179,18 +185,13 @@ export default function NouvelleClassePage() {
                   {t("adm_class_new_preview")} {formatMoney(Number(tuition))}
                 </p>
               ) : null}
-              <p className="text-xs text-muted-foreground">{t("adm_class_new_status_default")}</p>
             </div>
 
-            {message ? (
-              <div
-                className={`rounded-xl border px-4 py-3 text-sm ${
-                  message.type === "ok"
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                    : "border-destructive/30 bg-destructive/10 text-destructive"
-                }`}
-              >
-                {message.text}
+            {showErrors && errors.length > 0 ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                {errors.map((item) => (
+                  <p key={item}>- {item}</p>
+                ))}
               </div>
             ) : null}
 
@@ -224,6 +225,14 @@ export default function NouvelleClassePage() {
           </div>
         </aside>
       </div>
+
+      <ActionFeedbackOverlay
+        open={feedback.open}
+        status={feedback.status}
+        message={feedback.message}
+        closeLabel={t("action_feedback_ok")}
+        onClose={close}
+      />
     </div>
   )
 }

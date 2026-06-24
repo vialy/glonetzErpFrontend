@@ -9,29 +9,85 @@ import {
   Circle,
   Filter,
   GraduationCap,
+  Loader2,
   Search,
   SlidersHorizontal,
   Sparkles,
   Users,
 } from "lucide-react"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
-import { useAdminLearners } from "@/hooks/use-admin-learners"
+import { classesService, type StaffClass } from "@/domains/classes"
+import { learnersService } from "@/domains/learners"
+import { isLearnerFullyPaid, resolveLearnerRemaining } from "@/domains/learners/learner-balance"
+import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
+import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { formatFcfa, getClassById } from "@/services/admin-mock.service"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { MobileBackButton } from "@/components/mobile-back-button"
-import { toast } from "@/components/ui/use-toast"
 import { cn } from "@/lib/utils"
 import { useLocale } from "@/hooks/use-locale"
+import { isApiDataProvider } from "@/lib/data-provider"
 
 export default function ClassPromotionPage() {
   const { t } = useLocale()
   const params = useParams<{ id: string }>()
   const classId = params?.id ?? ""
-  const adminClassesList = useAdminClasses()
-  const source = adminClassesList.find((c) => c.id === classId) ?? getClassById(classId)
-  const adminLearnersList = useAdminLearners()
+  const { classes: adminClassesList, loading: classesLoading } = useAdminClassesQuery()
+  const { learners: adminLearnersList, loading: learnersLoading } = useAdminLearnersQuery()
+  const [source, setSource] = useState<StaffClass | null>(null)
+  const [loadingSource, setLoadingSource] = useState(true)
+
+  useEffect(() => {
+    if (!classId) {
+      setSource(null)
+      setLoadingSource(false)
+      return
+    }
+
+    const fromList = adminClassesList.find((c) => c.id === classId)
+    if (fromList) {
+      setSource(fromList)
+      setLoadingSource(false)
+      return
+    }
+
+    if (!isApiDataProvider()) {
+      setSource(getClassById(classId) ?? null)
+      setLoadingSource(false)
+      return
+    }
+
+    if (classesLoading) {
+      setSource(null)
+      setLoadingSource(true)
+      return
+    }
+
+    let cancelled = false
+    setLoadingSource(true)
+    void classesService
+      .get(classId)
+      .then((item) => {
+        if (!cancelled) {
+          setSource(item)
+          setLoadingSource(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSource(null)
+          setLoadingSource(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [classId, adminClassesList, classesLoading])
+
   const candidates = useMemo(
     () => adminLearnersList.filter((item) => item.classId === classId),
     [adminLearnersList, classId],
@@ -52,6 +108,17 @@ export default function ClassPromotionPage() {
   const [search, setSearch] = useState("")
   const [paymentFilter, setPaymentFilter] = useState<"all" | "paid" | "unpaid">("all")
   const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const { feedback, close, run } = useActionFeedback()
+
+  if (loadingSource || (isApiDataProvider() && (classesLoading || learnersLoading))) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-10 text-sm text-muted-foreground md:px-6">
+        <Loader2 className="size-4 animate-spin" />
+        {t("adm_set_loading")}
+      </div>
+    )
+  }
 
   if (!source) {
     return (
@@ -69,14 +136,43 @@ export default function ClassPromotionPage() {
     const query = search.trim().toLowerCase()
     const matchesSearch =
       !query || row.fullName.toLowerCase().includes(query) || row.phone.toLowerCase().includes(query)
-    const isPaid = row.paid >= row.due
+    const isPaid = isLearnerFullyPaid(row, adminClassesList)
     const matchesPayment = paymentFilter === "all" || (paymentFilter === "paid" ? isPaid : !isPaid)
     return matchesSearch && matchesPayment
   })
 
-  const unpaidIds = candidates.filter((c) => c.paid < c.due).map((c) => c.id)
+  const unpaidIds = candidates
+    .filter((learner) => !isLearnerFullyPaid(learner, adminClassesList))
+    .map((learner) => learner.id)
   const blockedIds = blockUnpaid ? unpaidIds : []
   const promotableCount = selectedIds.filter((id) => !blockedIds.includes(id)).length
+  const promotableIds = selectedIds.filter((id) => !blockedIds.includes(id))
+
+  async function handlePromote() {
+    if (promotableCount === 0 || !destination || !destinationId) return
+
+    setSubmitting(true)
+    const outcome = await run(
+      () =>
+        learnersService.batchAssignClass({
+          userIds: promotableIds,
+          classId: destinationId,
+        }),
+      {
+        loading: t("adm_class_promo_saving"),
+        success: t("adm_class_promo_ok")
+          .replace("{n}", String(promotableCount))
+          .replace("{dest}", destination.name),
+        error: t("adm_class_promo_fail"),
+      },
+    )
+    setSubmitting(false)
+
+    if (outcome.ok) {
+      setSubmitted(true)
+      setSelectedIds((prev) => prev.filter((id) => !promotableIds.includes(id)))
+    }
+  }
 
   return (
     <div className="min-h-0 flex-1 px-4 pb-28 pt-4 md:px-6 md:pb-10 lg:px-8">
@@ -203,7 +299,8 @@ export default function ClassPromotionPage() {
               <div className="space-y-3">
                 {filteredCandidates.map((row) => {
                   const checked = selectedIds.includes(row.id)
-                  const hasDebt = row.paid < row.due
+                  const remaining = resolveLearnerRemaining(row, adminClassesList)
+                  const hasDebt = remaining > 0.01
                   const isBlocked = blockUnpaid && hasDebt
                   return (
                     <div
@@ -226,7 +323,7 @@ export default function ClassPromotionPage() {
                             {row.phone}
                             {hasDebt ? (
                               <span className="ml-2 text-amber-800 dark:text-amber-200">
-                                · {t("adm_class_promo_arrears").replace("{amount}", formatFcfa(row.due - row.paid))}
+                                · {t("adm_class_promo_arrears").replace("{amount}", formatFcfa(remaining))}
                               </span>
                             ) : (
                               <span className="ml-2 text-emerald-700">· {t("adm_class_promo_up_to_date")}</span>
@@ -283,21 +380,15 @@ export default function ClassPromotionPage() {
             <Button
               type="button"
               className="mt-5 rounded-xl px-8"
-              disabled={promotableCount === 0 || !destination}
-              onClick={() => {
-                if (promotableCount > 0 && destination) {
-                  setSubmitted(true)
-                  toast({
-                    title: t("adm_class_promo_toast_title"),
-                    description: t("adm_class_promo_toast_desc")
-                      .replace("{n}", String(promotableCount))
-                      .replace("{dest}", destination.name),
-                  })
-                }
-              }}
+              disabled={promotableCount === 0 || !destination || submitting}
+              onClick={() => void handlePromote()}
             >
-              <Sparkles className="mr-2 size-4" />
-              {t("adm_class_promo_validate")}
+              {submitting ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 size-4" />
+              )}
+              {submitting ? t("adm_class_promo_saving") : t("adm_class_promo_validate")}
             </Button>
             {promotableCount === 0 ? (
               <p className="mt-3 text-xs text-destructive">{t("adm_class_promo_err_none")}</p>
@@ -339,6 +430,14 @@ export default function ClassPromotionPage() {
           </div>
         </aside>
       </div>
+
+      <ActionFeedbackOverlay
+        open={feedback.open}
+        status={feedback.status}
+        message={feedback.message}
+        closeLabel={t("action_feedback_ok")}
+        onClose={close}
+      />
     </div>
   )
 }

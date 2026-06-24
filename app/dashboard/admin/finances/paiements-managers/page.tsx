@@ -49,7 +49,7 @@ function StatusBadge({ status }: { status: "pending" | "success" | "failed" | un
 
 export default function ManagerPaymentsPage() {
   const { t } = useLocale()
-  const { operations, wallets, managerAppBalances, settleManagerTransfer, validateFailedTransferAfterCheck } =
+  const { operations, wallets, managerWalletSnapshots, settleManagerTransfer, validateFailedTransferAfterCheck } =
     useFinanceContext()
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "success" | "failed">("all")
   const [managerFilter, setManagerFilter] = useState("all")
@@ -559,16 +559,35 @@ export default function ManagerPaymentsPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-          {managerOptions.map((m) => (
+          {(managerWalletSnapshots.length > 0 ? managerWalletSnapshots : managerOptions.map((m) => ({
+            managerId: m.id,
+            fullName: m.name,
+            allocated: 0,
+            spent: 0,
+            remaining: 0,
+          }))).map((snap) => (
             <div
-              key={m.id}
-              className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/15 px-4 py-3 transition hover:border-primary/25 hover:bg-muted/25"
+              key={snap.managerId}
+              className="rounded-xl border border-border/80 bg-muted/15 px-4 py-3"
             >
-              <p className="font-medium">{m.name}</p>
-              <p className="text-sm font-semibold tabular-nums text-primary">{formatFcfa(managerAppBalances[m.id] ?? 0)}</p>
+              <p className="font-medium">{snap.fullName}</p>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-muted-foreground">{t("fin_mgr_exp_kpi_allocated")}</p>
+                  <p className="font-semibold tabular-nums">{formatFcfa(snap.allocated)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{t("fin_mgr_exp_kpi_spent")}</p>
+                  <p className="font-semibold tabular-nums text-rose-700">{formatFcfa(snap.spent)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{t("fin_mgr_exp_kpi_remaining")}</p>
+                  <p className="font-semibold tabular-nums text-emerald-700">{formatFcfa(snap.remaining)}</p>
+                </div>
+              </div>
             </div>
           ))}
-          {managerOptions.length === 0 ? (
+          {managerWalletSnapshots.length === 0 && managerOptions.length === 0 ? (
             <p className="col-span-full text-sm text-muted-foreground">{t("fin_mgr_pay_no_managers")}</p>
           ) : null}
         </div>

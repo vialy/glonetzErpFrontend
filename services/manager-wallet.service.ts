@@ -7,7 +7,9 @@ import type {
   ManagerExpenseRecord,
 } from "@/domains/manager-wallet/types"
 
-const STORAGE_KEY = "glonetz_manager_wallet_v2"
+const STORAGE_KEY = "glonetz_manager_wallets_v3"
+const LEGACY_KEY = "glonetz_manager_wallet_v2"
+const DEFAULT_MANAGER_ID = "u2"
 
 interface PersistedState {
   envelopeCeiling: number
@@ -15,6 +17,8 @@ interface PersistedState {
   allocations: ManagerBudgetAllocation[]
   periodHint: string
 }
+
+type WalletsStore = Record<string, PersistedState>
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof localStorage !== "undefined"
@@ -29,30 +33,53 @@ function defaultState(): PersistedState {
   }
 }
 
-function readState(): PersistedState {
-  if (!canUseStorage()) return defaultState()
+function readStore(): WalletsStore {
+  if (!canUseStorage()) return {}
   const raw = localStorage.getItem(STORAGE_KEY)
-  if (!raw) return defaultState()
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as WalletsStore
+      return parsed && typeof parsed === "object" ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  const legacyRaw = localStorage.getItem(LEGACY_KEY)
+  if (!legacyRaw) return {}
   try {
-    const parsed = JSON.parse(raw) as Partial<PersistedState>
-    if (typeof parsed.envelopeCeiling !== "number" || !Array.isArray(parsed.expenses)) {
-      return defaultState()
+    const legacy = JSON.parse(legacyRaw) as Partial<PersistedState>
+    if (typeof legacy.envelopeCeiling !== "number" || !Array.isArray(legacy.expenses)) return {}
+    const migrated: WalletsStore = {
+      [DEFAULT_MANAGER_ID]: {
+        envelopeCeiling: legacy.envelopeCeiling,
+        expenses: legacy.expenses,
+        allocations: Array.isArray(legacy.allocations) ? legacy.allocations : [],
+        periodHint: typeof legacy.periodHint === "string" ? legacy.periodHint : "",
+      },
     }
-    return {
-      envelopeCeiling: parsed.envelopeCeiling,
-      expenses: parsed.expenses,
-      allocations: Array.isArray(parsed.allocations) ? parsed.allocations : defaultState().allocations,
-      periodHint: typeof parsed.periodHint === "string" ? parsed.periodHint : defaultState().periodHint,
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
+    return migrated
   } catch {
-    return defaultState()
+    return {}
   }
 }
 
-function writeState(state: PersistedState) {
+function writeStore(store: WalletsStore) {
   if (!canUseStorage()) return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
   window.dispatchEvent(new Event("manager-wallet-updated"))
+}
+
+function readState(managerId: string): PersistedState {
+  const store = readStore()
+  return store[managerId] ?? defaultState()
+}
+
+function writeState(managerId: string, state: PersistedState) {
+  const store = readStore()
+  store[managerId] = state
+  writeStore(store)
 }
 
 function totalSpent(expenses: ManagerExpenseRecord[]): number {
@@ -68,42 +95,82 @@ function inferPeriodHint(allocations: ManagerBudgetAllocation[]): string {
   })
 }
 
+function buildSummary(state: PersistedState): ManagerBudgetSummary {
+  const spent = totalSpent(state.expenses)
+  return {
+    envelopeCeiling: state.envelopeCeiling,
+    totalSpent: spent,
+    remaining: Math.max(state.envelopeCeiling - spent, 0),
+    currencyCode: "XOF",
+    periodHint: state.periodHint,
+  }
+}
+
 export const ManagerWalletService = {
-  getSummary(): ManagerBudgetSummary {
-    const s = readState()
-    const spent = totalSpent(s.expenses)
+  getSummary(managerId: string = DEFAULT_MANAGER_ID): ManagerBudgetSummary {
+    return buildSummary(readState(managerId))
+  },
+
+  getGlobalSummary(): ManagerBudgetSummary {
+    const store = readStore()
+    let envelopeCeiling = 0
+    let totalSpentSum = 0
+    for (const state of Object.values(store)) {
+      envelopeCeiling += state.envelopeCeiling
+      totalSpentSum += totalSpent(state.expenses)
+    }
     return {
-      envelopeCeiling: s.envelopeCeiling,
-      totalSpent: spent,
-      remaining: Math.max(s.envelopeCeiling - spent, 0),
+      envelopeCeiling,
+      totalSpent: totalSpentSum,
+      remaining: Math.max(envelopeCeiling - totalSpentSum, 0),
       currencyCode: "XOF",
-      periodHint: s.periodHint,
     }
   },
 
-  getExpenses(): ManagerExpenseRecord[] {
-    return [...readState().expenses].sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
+  listManagerIds(): string[] {
+    const store = readStore()
+    const ids = Object.keys(store)
+    return ids.length > 0 ? ids : [DEFAULT_MANAGER_ID]
   },
 
-  getAllocations(): ManagerBudgetAllocation[] {
-    return [...readState().allocations].sort((a, b) => (a.allocatedAt < b.allocatedAt ? 1 : -1))
+  getExpenses(managerId: string = DEFAULT_MANAGER_ID): ManagerExpenseRecord[] {
+    return [...readState(managerId).expenses].sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
   },
 
-  registerAdminAllocation(input: { amount: number; note: string }): ManagerBudgetAllocation {
+  getAllExpenses(): Array<ManagerExpenseRecord & { managerId: string }> {
+    const store = readStore()
+    const out: Array<ManagerExpenseRecord & { managerId: string }> = []
+    for (const [managerId, state] of Object.entries(store)) {
+      for (const expense of state.expenses) {
+        out.push({ ...expense, managerId })
+      }
+    }
+    return out.sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
+  },
+
+  getAllocations(managerId: string = DEFAULT_MANAGER_ID): ManagerBudgetAllocation[] {
+    return [...readState(managerId).allocations].sort((a, b) => (a.allocatedAt < b.allocatedAt ? 1 : -1))
+  },
+
+  registerAdminAllocation(
+    managerId: string,
+    input: { amount: number; note: string },
+  ): ManagerBudgetAllocation {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new Error("INVALID_AMOUNT")
     }
     const note = input.note.trim() || "Allocation admin"
-    const state = readState()
+    const state = readState(managerId)
     const allocatedAt = new Date().toISOString()
     const allocation: ManagerBudgetAllocation = {
       id: `ALL-${Date.now()}`,
       allocatedAt,
       amount: input.amount,
       note,
+      managerId,
     }
     const nextAllocations = [allocation, ...state.allocations]
-    writeState({
+    writeState(managerId, {
       ...state,
       allocations: nextAllocations,
       envelopeCeiling: state.envelopeCeiling + input.amount,
@@ -112,14 +179,17 @@ export const ManagerWalletService = {
     return allocation
   },
 
-  async createExpense(input: CreateManagerExpenseInput): Promise<ManagerExpenseRecord> {
+  async createExpense(
+    managerId: string,
+    input: CreateManagerExpenseInput,
+  ): Promise<ManagerExpenseRecord> {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new Error("INVALID_AMOUNT")
     }
     if (!input.categoryId || !input.categoryLabel.trim()) {
       throw new Error("CATEGORY_REQUIRED")
     }
-    const state = readState()
+    const state = readState(managerId)
     const spent = totalSpent(state.expenses)
     const remaining = state.envelopeCeiling - spent
     if (input.amount > remaining) {
@@ -150,9 +220,10 @@ export const ManagerWalletService = {
       comment: input.comment?.trim() || undefined,
       attachmentName,
       attachmentDataUrl,
+      managerId,
     }
 
-    writeState({
+    writeState(managerId, {
       ...state,
       expenses: [record, ...state.expenses],
     })

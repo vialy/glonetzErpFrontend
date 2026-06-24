@@ -12,6 +12,10 @@ export interface ClaimRecord {
   screenshotName?: string
   screenshotDataUrl?: string
   status: ClaimStatus
+  // Champs cote staff (GET /staff/claims) — optionnels, absents cote etudiant.
+  userId?: string
+  userName?: string
+  proofUrl?: string
 }
 
 export interface CreateClaimInput {

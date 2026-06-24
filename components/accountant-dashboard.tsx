@@ -18,6 +18,7 @@ import { useLocale } from "@/hooks/use-locale"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export function AccountantDashboard() {
   const { t } = useLocale()
@@ -118,19 +119,30 @@ export function AccountantDashboard() {
       </section>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {cards.map((c) => (
-          <div
-            key={c.key}
-            className={`flex flex-col rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md ${c.tone}`}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
-              <span className="rounded-lg bg-background/80 p-1.5 shadow-sm">{c.icon}</span>
-            </div>
-            <p className="text-lg font-semibold tabular-nums tracking-tight">{c.value}</p>
-            <p className="mt-1 text-xs text-muted-foreground leading-snug">{c.sub}</p>
-          </div>
-        ))}
+        {!summary
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <div key={`sk-${i}`} className="flex flex-col rounded-2xl border border-border/60 p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="size-8 rounded-lg" />
+                </div>
+                <Skeleton className="h-6 w-28" />
+                <Skeleton className="mt-2 h-3 w-20" />
+              </div>
+            ))
+          : cards.map((c) => (
+              <div
+                key={c.key}
+                className={`flex flex-col rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md ${c.tone}`}
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+                  <span className="rounded-lg bg-background/80 p-1.5 shadow-sm">{c.icon}</span>
+                </div>
+                <p className="text-lg font-semibold tabular-nums tracking-tight">{c.value}</p>
+                <p className="mt-1 text-xs text-muted-foreground leading-snug">{c.sub}</p>
+              </div>
+            ))}
       </div>
 
       <nav className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label={t("acc_quick_nav_aria")}>

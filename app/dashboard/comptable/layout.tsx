@@ -6,17 +6,17 @@ import { useAuth } from "@/hooks/use-auth"
 
 export default function ComptableLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { role, isAuthenticated } = useAuth()
+  const { role, isAuthenticated, status } = useAuth()
 
   useEffect(() => {
+    if (status === "loading") return
     if (!isAuthenticated) return
     if (role !== "accountant") {
       router.replace("/dashboard")
     }
-  }, [isAuthenticated, role, router])
+  }, [status, isAuthenticated, role, router])
 
-  if (!isAuthenticated) return null
-  if (role !== "accountant") return null
+  if (status === "loading" || !isAuthenticated || role !== "accountant") return null
 
   return <>{children}</>
 }

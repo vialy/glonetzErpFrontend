@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { buildGlobalSearchIndex, type GlobalSearchItem } from "@/lib/global-search-index"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
 import { useLocale } from "@/hooks/use-locale"
+import { isApiDataProvider } from "@/lib/data-provider"
 import type { UserRole } from "@/types"
 
 const REFRESH_EVENTS = [
@@ -19,6 +21,7 @@ export function useGlobalSearchIndex(
   phone?: string | null,
 ): GlobalSearchItem[] {
   const { t } = useLocale()
+  const { classes } = useAdminClassesQuery()
   const [tick, setTick] = useState(0)
   const refresh = useCallback(() => setTick((n) => n + 1), [])
 
@@ -36,6 +39,9 @@ export function useGlobalSearchIndex(
 
   return useMemo(() => {
     void tick
-    return buildGlobalSearchIndex(role, t, { phone })
-  }, [role, t, phone, tick])
+    return buildGlobalSearchIndex(role, t, {
+      phone,
+      classes: isApiDataProvider() ? classes : undefined,
+    })
+  }, [role, t, phone, tick, classes])
 }

@@ -1,11 +1,20 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
-import { ArrowLeft, Ban, CheckCircle2, KeyRound, Pencil, Phone, Shield, User } from "lucide-react"
+import {
+  ArrowLeft,
+  Ban,
+  CheckCircle2,
+  KeyRound,
+  Loader2,
+  Mail,
+  Pencil,
+  Shield,
+  User,
+} from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { AdminUserPhoneField } from "@/components/admin/admin-user-phone-field"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,7 +27,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { MobileBackButton } from "@/components/mobile-back-button"
 import {
   Select,
   SelectContent,
@@ -26,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { MobileBackButton } from "@/components/mobile-back-button"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,22 +45,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { useAdminUsers } from "@/hooks/use-admin-users"
 import { useLocale } from "@/hooks/use-locale"
+import { getApiErrorMessage } from "@/lib/api-error"
 import {
-  resetAdminUserPin,
-  setAdminUserStatus,
-  updateAdminUser,
-  type AdminUserItem,
-} from "@/services/admin-mock.service"
-import {
-  adminUserPhoneToInputValue,
-  canonicalAdminUserPhone,
-  getAdminUserPhoneFieldError,
-  isAdminUserPhoneValid,
-} from "@/lib/admin-user-phone"
+  CREATABLE_STAFF_ROLES,
+  staffMembersService,
+  type StaffMember,
+  type StaffRole,
+} from "@/domains/staff"
 
-function roleLabel(role: AdminUserItem["role"], t: (k: import("@/services/i18n").TranslationKey) => string) {
+type Translate = (k: import("@/services/i18n").TranslationKey) => string
+
+function roleLabel(role: StaffRole, t: Translate) {
   switch (role) {
     case "admin":
       return t("adm_usr_role_admin")
@@ -59,8 +64,8 @@ function roleLabel(role: AdminUserItem["role"], t: (k: import("@/services/i18n")
       return t("adm_usr_role_manager")
     case "accountant":
       return t("adm_usr_role_accountant")
-    case "student":
-      return t("adm_usr_role_student")
+    case "support":
+      return t("adm_usr_role_support")
     default:
       return role
   }
@@ -70,127 +75,117 @@ export default function AdminUserFichePage() {
   const { t } = useLocale()
   const params = useParams<{ id: string }>()
   const id = params?.id ?? ""
-  const users = useAdminUsers()
-  const user = useMemo(() => users.find((u) => u.id === id), [users, id])
+
+  const [member, setMember] = useState<StaffMember | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const [editOpen, setEditOpen] = useState(false)
-  const [pinDialogOpen, setPinDialogOpen] = useState(false)
+  const [pwdDialogOpen, setPwdDialogOpen] = useState(false)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
-  const [pendingStatus, setPendingStatus] = useState<AdminUserItem["status"] | null>(null)
+  const [pendingStatus, setPendingStatus] = useState<StaffMember["status"] | null>(null)
 
   const [formName, setFormName] = useState("")
-  const [formPhone, setFormPhone] = useState("")
-  const [formRole, setFormRole] = useState<AdminUserItem["role"]>("student")
-  const [formStatus, setFormStatus] = useState<AdminUserItem["status"]>("active")
-
+  const [formRole, setFormRole] = useState<StaffRole>("manager")
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
-  const [editPhoneTouched, setEditPhoneTouched] = useState(false)
-  const [editSubmitTouched, setEditSubmitTouched] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const editPhoneDuplicate = useMemo(() => {
-    if (!user || !isAdminUserPhoneValid(formPhone)) return false
-    const key = canonicalAdminUserPhone(formPhone)
-    return users.some((u) => u.id !== user.id && canonicalAdminUserPhone(u.phone) === key)
-  }, [formPhone, user, users])
+  const load = useCallback(async () => {
+    if (!id) return
+    setLoading(true)
+    try {
+      setMember(await staffMembersService.get(id))
+    } catch {
+      setMember(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
 
-  const editPhoneError = getAdminUserPhoneFieldError(
-    formPhone,
-    editPhoneTouched || editSubmitTouched,
-    {
-      empty: t("adm_usr_err_phone_required"),
-      invalid: t("adm_usr_err_phone_invalid"),
-      duplicate: t("adm_usr_err_phone_dup"),
-    },
-    editPhoneDuplicate,
-  )
+  useEffect(() => {
+    void load()
+    const onUpdate = () => void load()
+    window.addEventListener("admin-staff-updated", onUpdate)
+    return () => window.removeEventListener("admin-staff-updated", onUpdate)
+  }, [load])
 
-  const canSaveEdit =
-    formName.trim().length >= 2 && isAdminUserPhoneValid(formPhone) && !editPhoneDuplicate
+  const canSaveEdit = useMemo(() => formName.trim().length >= 2, [formName])
 
   function openEdit() {
-    if (!user) return
-    setFormName(user.fullName)
-    setFormPhone(adminUserPhoneToInputValue(user.phone))
-    setFormRole(user.role)
-    setFormStatus(user.status)
-    setEditPhoneTouched(false)
-    setEditSubmitTouched(false)
+    if (!member) return
+    setFormName(member.fullName)
+    setFormRole(member.role === "admin" ? "manager" : member.role)
     setEditOpen(true)
     setBanner(null)
   }
 
-  function saveEdit() {
-    if (!user) return
-    setEditSubmitTouched(true)
-    setEditPhoneTouched(true)
-    if (!canSaveEdit) {
-      setBanner({
-        type: "error",
-        text: editPhoneError ?? t("adm_usr_toast_missing_desc"),
-      })
-      return
-    }
+  async function saveEdit() {
+    if (!member || !canSaveEdit) return
     setSaving(true)
     try {
-      updateAdminUser(user.id, {
-        fullName: formName,
-        phone: formPhone,
-        role: formRole,
-        status: formStatus,
+      const roleChanged = member.role !== "admin" && formRole !== member.role
+      const updated = await staffMembersService.update(member.id, {
+        name: formName,
+        ...(roleChanged ? { role: formRole } : {}),
       })
+      if (updated) setMember(updated)
       setBanner({ type: "success", text: t("adm_usr_saved_ok") })
       setEditOpen(false)
     } catch (e) {
-      const code = e instanceof Error ? e.message : ""
-      if (code === "PHONE_ALREADY_USED") {
-        setBanner({ type: "error", text: t("adm_usr_err_phone_dup") })
-      } else if (code === "PHONE_INVALID_FORMAT") {
-        setBanner({ type: "error", text: t("adm_usr_err_phone_invalid") })
-      } else if (code === "NAME_REQUIRED" || code === "PHONE_REQUIRED") {
-        setBanner({ type: "error", text: t("adm_usr_toast_missing_desc") })
-      } else {
-        setBanner({ type: "error", text: t("adm_usr_err_save") })
-      }
+      setBanner({ type: "error", text: getApiErrorMessage(e, t("adm_usr_err_save")) })
     } finally {
       setSaving(false)
     }
   }
 
-  function confirmPinReset() {
-    if (!user) return
+  async function confirmPasswordReset() {
+    if (!member) return
+    setBusy(true)
     try {
-      const { pin, phone, fullName } = resetAdminUserPin(user.id)
+      await staffMembersService.regeneratePassword(member.id)
       setBanner({
         type: "success",
-        text: t("adm_usr_pin_reset_msg")
-          .replace("{name}", fullName)
-          .replace("{phone}", phone)
-          .replace("{pin}", pin),
+        text: t("adm_usr_regenerate_pwd_ok")
+          .replace("{name}", member.fullName)
+          .replace("{email}", member.email),
       })
-      setPinDialogOpen(false)
-    } catch {
-      setBanner({ type: "error", text: t("adm_usr_err_pin") })
+      setPwdDialogOpen(false)
+    } catch (e) {
+      setBanner({ type: "error", text: getApiErrorMessage(e, t("adm_usr_err_regenerate")) })
+    } finally {
+      setBusy(false)
     }
   }
 
-  function confirmStatusChange() {
-    if (!user || !pendingStatus) return
+  async function confirmStatusChange() {
+    if (!member || !pendingStatus) return
+    setBusy(true)
     try {
-      setAdminUserStatus(user.id, pendingStatus)
+      const updated = await staffMembersService.setActive(member.id, pendingStatus === "active")
+      if (updated) setMember(updated)
       setBanner({
         type: "success",
         text: pendingStatus === "active" ? t("adm_usr_activated") : t("adm_usr_deactivated"),
       })
-    } catch {
-      setBanner({ type: "error", text: t("adm_usr_err_status") })
+    } catch (e) {
+      setBanner({ type: "error", text: getApiErrorMessage(e, t("adm_usr_err_status")) })
     } finally {
+      setBusy(false)
       setStatusDialogOpen(false)
       setPendingStatus(null)
     }
   }
 
-  if (!user) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 px-4 py-16 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        {t("adm_usr_loading")}
+      </div>
+    )
+  }
+
+  if (!member) {
     return (
       <div className="px-4 py-8 md:px-6 lg:px-8">
         <MobileBackButton fallbackHref="/dashboard/admin/utilisateurs" />
@@ -202,12 +197,14 @@ export default function AdminUserFichePage() {
     )
   }
 
+  const isAdmin = member.role === "admin"
+
   return (
     <div className="px-4 pb-10 pt-4 md:px-6 lg:px-8">
       <MobileBackButton fallbackHref="/dashboard/admin/utilisateurs" />
       <AdminPageHeader
-        title={user.fullName}
-        subtitle={t("adm_usr_fiche_subtitle").replace("{id}", user.id)}
+        title={member.fullName}
+        subtitle={t("adm_usr_fiche_subtitle").replace("{id}", member.id)}
         gradientClassName="from-slate-700 to-slate-900"
         actions={
           <Button
@@ -246,11 +243,13 @@ export default function AdminUserFichePage() {
               <Pencil className="mr-2 size-3.5" />
               {t("adm_usr_edit")}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPinDialogOpen(true)}>
-              <KeyRound className="mr-2 size-3.5" />
-              {t("adm_usr_reset_pin")}
-            </Button>
-            {user.status === "active" ? (
+            {!isAdmin ? (
+              <Button size="sm" variant="outline" onClick={() => setPwdDialogOpen(true)}>
+                <KeyRound className="mr-2 size-3.5" />
+                {t("adm_usr_regenerate_pwd")}
+              </Button>
+            ) : null}
+            {!isAdmin && member.status === "active" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -263,7 +262,8 @@ export default function AdminUserFichePage() {
                 <Ban className="mr-2 size-3.5" />
                 {t("adm_usr_deactivate_btn")}
               </Button>
-            ) : (
+            ) : null}
+            {!isAdmin && member.status === "inactive" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -276,7 +276,7 @@ export default function AdminUserFichePage() {
                 <CheckCircle2 className="mr-2 size-3.5" />
                 {t("adm_usr_activate_btn")}
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -284,24 +284,27 @@ export default function AdminUserFichePage() {
           <div className="flex items-center gap-2">
             <User className="size-4 text-muted-foreground" />
             <dt className="text-muted-foreground">{t("adm_usr_th_name")}</dt>
-            <dd className="font-medium">{user.fullName}</dd>
+            <dd className="font-medium">{member.fullName}</dd>
           </div>
           <div className="flex items-center gap-2">
-            <Phone className="size-4 text-muted-foreground" />
-            <dt className="text-muted-foreground">{t("adm_usr_th_phone")}</dt>
-            <dd className="font-mono">{user.phone}</dd>
+            <Mail className="size-4 text-muted-foreground" />
+            <dt className="text-muted-foreground">{t("adm_usr_th_email")}</dt>
+            <dd className="font-mono">{member.email}</dd>
           </div>
           <div className="flex items-center gap-2">
             <Shield className="size-4 text-muted-foreground" />
             <dt className="text-muted-foreground">{t("adm_usr_th_role")}</dt>
-            <dd className="font-medium">{roleLabel(user.role, t)}</dd>
+            <dd className="font-medium">{roleLabel(member.role, t)}</dd>
           </div>
           <div className="flex flex-wrap gap-2 pt-2">
-            {user.status === "active" ? (
+            {member.status === "active" ? (
               <Badge className="bg-emerald-500/15 text-emerald-800">{t("adm_usr_status_active")}</Badge>
             ) : (
               <Badge variant="secondary">{t("adm_usr_status_inactive")}</Badge>
             )}
+            {member.mustChangePassword ? (
+              <Badge variant="outline">{t("adm_usr_must_change_pwd")}</Badge>
+            ) : null}
           </div>
         </dl>
       </div>
@@ -317,67 +320,64 @@ export default function AdminUserFichePage() {
               <Label htmlFor="usr-edit-name">{t("adm_usr_ph_name")}</Label>
               <Input id="usr-edit-name" value={formName} onChange={(e) => setFormName(e.target.value)} />
             </div>
-            <AdminUserPhoneField
-              id="usr-edit-phone"
-              value={formPhone}
-              onChange={setFormPhone}
-              label={t("adm_usr_th_phone")}
-              hint={t("adm_usr_phone_hint")}
-              placeholder={t("adm_usr_ph_phone_example")}
-              searchPlaceholder={t("phone_country_search")}
-              touched={editPhoneTouched || editSubmitTouched}
-              errorMessage={editPhoneError}
-              onBlur={() => setEditPhoneTouched(true)}
-            />
             <div className="space-y-1.5">
-              <Label>{t("adm_usr_th_role")}</Label>
-              <Select value={formRole} onValueChange={(v) => setFormRole(v as AdminUserItem["role"])}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">{t("adm_usr_role_admin")}</SelectItem>
-                  <SelectItem value="manager">{t("adm_usr_role_manager")}</SelectItem>
-                  <SelectItem value="accountant">{t("adm_usr_role_accountant")}</SelectItem>
-                  <SelectItem value="student">{t("adm_usr_role_student")}</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="usr-edit-email">{t("adm_usr_th_email")}</Label>
+              <Input id="usr-edit-email" value={member.email} disabled readOnly />
             </div>
             <div className="space-y-1.5">
-              <Label>{t("adm_usr_th_status")}</Label>
-              <Select value={formStatus} onValueChange={(v) => setFormStatus(v as AdminUserItem["status"])}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">{t("adm_usr_status_active")}</SelectItem>
-                  <SelectItem value="inactive">{t("adm_usr_status_inactive")}</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>{t("adm_usr_th_role")}</Label>
+              {isAdmin ? (
+                <Input value={roleLabel(member.role, t)} disabled readOnly />
+              ) : (
+                <Select value={formRole} onValueChange={(v) => setFormRole(v as StaffRole)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CREATABLE_STAFF_ROLES.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {roleLabel(r, t)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
               {t("adm_usr_cancel")}
             </Button>
-            <Button type="button" onClick={saveEdit} disabled={saving || (editSubmitTouched && !canSaveEdit)}>
-              {saving ? t("acc_exporting") : t("adm_usr_save")}
+            <Button type="button" onClick={() => void saveEdit()} disabled={saving || !canSaveEdit}>
+              {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("adm_usr_save")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={pinDialogOpen} onOpenChange={setPinDialogOpen}>
+      <AlertDialog open={pwdDialogOpen} onOpenChange={setPwdDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("adm_usr_dialog_reset_title")}</AlertDialogTitle>
+            <AlertDialogTitle>{t("adm_usr_regenerate_pwd_dialog_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("adm_usr_dialog_reset_named").replace("{name}", user.fullName)}
+              {t("adm_usr_regenerate_pwd_named")
+                .replace("{name}", member.fullName)
+                .replace("{email}", member.email)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("adm_usr_cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmPinReset}>{t("adm_usr_confirm")}</AlertDialogAction>
+            <AlertDialogCancel disabled={busy}>{t("adm_usr_cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmPasswordReset()
+              }}
+              disabled={busy}
+            >
+              {busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("adm_usr_confirm")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -390,13 +390,22 @@ export default function AdminUserFichePage() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingStatus === "active"
-                ? t("adm_usr_confirm_activate").replace("{name}", user.fullName)
-                : t("adm_usr_confirm_deactivate").replace("{name}", user.fullName)}
+                ? t("adm_usr_confirm_activate").replace("{name}", member.fullName)
+                : t("adm_usr_confirm_deactivate").replace("{name}", member.fullName)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("adm_usr_cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmStatusChange}>{t("adm_usr_confirm")}</AlertDialogAction>
+            <AlertDialogCancel disabled={busy}>{t("adm_usr_cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmStatusChange()
+              }}
+              disabled={busy}
+            >
+              {busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("adm_usr_confirm")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

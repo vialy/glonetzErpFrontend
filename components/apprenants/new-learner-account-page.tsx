@@ -1,27 +1,35 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Save } from "lucide-react"
+import { ArrowLeft, Loader2, Save } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { getAdminLearners } from "@/services/admin-mock.service"
-import { useAdminClasses } from "@/hooks/use-admin-classes"
+import { AdminUserPhoneField } from "@/components/admin/admin-user-phone-field"
+import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
+import { learnersService } from "@/domains/learners"
+import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
+import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useLocale } from "@/hooks/use-locale"
+import {
+  canonicalAdminUserPhone,
+  getAdminUserPhoneFieldError,
+  isAdminUserPhoneValid,
+  parseAdminUserPhone,
+} from "@/lib/admin-user-phone"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { getAdminLearners } from "@/services/admin-mock.service"
 
 export type NewLearnerAccountPageProps = {
-  /** Lien Retour (header) */
   backHref: string
-  /** Redirection apres creation reussie */
   afterSubmitHref: string
-  /** Lien secondaire vers l'import */
   importHref: string
 }
 
 export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }: NewLearnerAccountPageProps) {
   const { t } = useLocale()
   const router = useRouter()
-  const adminClasses = useAdminClasses()
+  const { classes: adminClasses, loading: classesLoading } = useAdminClassesQuery()
   const [fullName, setFullName] = useState("")
   const [phone, setPhone] = useState("")
   const [dob, setDob] = useState("")
@@ -29,71 +37,102 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
   const [address, setAddress] = useState("")
   const [classId, setClassId] = useState("")
   const [forcePinChange, setForcePinChange] = useState(true)
-  const [saved, setSaved] = useState(false)
+  const [phoneTouched, setPhoneTouched] = useState(false)
+  const [hasTriedSubmit, setHasTriedSubmit] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  // Synchronous guard against double submission: state updates are async, so a
+  // rapid second click (or duplicate invocation) could fire a second POST
+  // before `submitting` re-renders. The ref blocks it immediately.
+  const submitLockRef = useRef(false)
+  const { feedback, close, run } = useActionFeedback()
 
   useEffect(() => {
     setClassId((prev) => prev || adminClasses[0]?.id || "")
   }, [adminClasses])
-  const [hasTriedSubmit, setHasTriedSubmit] = useState(false)
-  const [snipMessage, setSnipMessage] = useState("")
-  const [snipType, setSnipType] = useState<"success" | "error">("success")
-  const [snipCounter, setSnipCounter] = useState(0)
 
-  function normalizePhone(phoneValue: string): string {
-    return phoneValue.replace(/[^\d]/g, "")
-  }
+  const phoneDuplicate = useMemo(() => {
+    if (isApiDataProvider() || !isAdminUserPhoneValid(phone)) return false
+    const key = canonicalAdminUserPhone(phone)
+    return getAdminLearners().some((l) => canonicalAdminUserPhone(l.phone) === key)
+  }, [phone])
+
+  const phoneFieldError = getAdminUserPhoneFieldError(
+    phone,
+    phoneTouched || hasTriedSubmit,
+    {
+      empty: t("lrn_new_err_phone"),
+      invalid: t("adm_usr_err_phone_invalid"),
+      duplicate: t("lrn_new_err_phone_dup"),
+    },
+    phoneDuplicate,
+  )
 
   const errors = useMemo(() => {
     const list: string[] = []
     if (!fullName.trim()) list.push(t("lrn_new_err_name"))
     if (fullName.trim() && fullName.trim().length < 3) list.push(t("lrn_new_err_name_short"))
-    if (!phone.trim()) list.push(t("lrn_new_err_phone"))
-    if (phone.trim()) {
-      const normalized = normalizePhone(phone)
-      if (normalized.length < 8 || normalized.length > 15) {
-        list.push(t("lrn_new_err_phone_len"))
+    if (!isApiDataProvider()) {
+      if (!dob) list.push(t("lrn_new_err_dob"))
+      if (dob) {
+        const dobDate = new Date(dob)
+        const now = new Date()
+        if (dobDate > now) list.push(t("lrn_new_err_dob_future"))
       }
-      const exists = getAdminLearners().some((l) => normalizePhone(l.phone) === normalized)
-      if (exists) list.push(t("lrn_new_err_phone_dup"))
-    }
-    if (!dob) list.push(t("lrn_new_err_dob"))
-    if (dob) {
-      const dobDate = new Date(dob)
-      const now = new Date()
-      if (dobDate > now) list.push(t("lrn_new_err_dob_future"))
     }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) list.push(t("lrn_new_err_email"))
     if (!classId) list.push(t("lrn_new_err_class"))
     return list
   }, [fullName, phone, dob, email, classId, t])
 
-  useEffect(() => {
-    if (snipCounter <= 0) return
-    const timer = setTimeout(() => setSnipCounter((prev) => prev - 1), 1000)
-    return () => clearTimeout(timer)
-  }, [snipCounter])
-
-  useEffect(() => {
-    if (snipCounter === 0) setSnipMessage("")
-  }, [snipCounter])
-
-  function showSnip(message: string, type: "success" | "error") {
-    setSnipMessage(message)
-    setSnipType(type)
-    setSnipCounter(5)
-  }
-
-  function handleSubmit() {
+  async function handleSubmit() {
+    if (submitLockRef.current) return
     setHasTriedSubmit(true)
-    if (errors.length > 0) {
-      showSnip(errors[0], "error")
-      return
+    setPhoneTouched(true)
+    setSubmitError(null)
+
+    const phoneErr = getAdminUserPhoneFieldError(
+      phone,
+      true,
+      {
+        empty: t("lrn_new_err_phone"),
+        invalid: t("adm_usr_err_phone_invalid"),
+        duplicate: t("lrn_new_err_phone_dup"),
+      },
+      phoneDuplicate,
+    )
+    const parsedPhone = parseAdminUserPhone(phone)
+    if (errors.length > 0 || phoneErr || !parsedPhone.ok) return
+
+    submitLockRef.current = true
+    setSubmitting(true)
+    const outcome = await run(
+      () =>
+        learnersService.create({
+          name: fullName.trim(),
+          phone: parsedPhone.e164,
+          email: email.trim() || undefined,
+          classId,
+        }),
+      {
+        loading: t("lrn_new_submitting"),
+        success: (created) =>
+          t("lrn_new_success_snip").replace("{name}", created.fullName || fullName.trim()),
+        error: t("lrn_new_fail"),
+      },
+    )
+    setSubmitting(false)
+    if (outcome.ok) {
+      window.setTimeout(() => {
+        close()
+        router.push(afterSubmitHref)
+      }, 900)
+    } else {
+      submitLockRef.current = false
+      if (outcome.error instanceof Error) {
+        setSubmitError(outcome.error.message)
+      }
     }
-    setSaved(true)
-    showSnip(t("lrn_new_success_snip").replace("{name}", fullName), "success")
-    setTimeout(() => {
-      router.push(afterSubmitHref)
-    }, 700)
   }
 
   return (
@@ -120,19 +159,31 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
               placeholder={t("lrn_new_ph_name")}
             />
           </label>
-          <label className="text-sm">
-            {t("lrn_new_phone")}
-            <input
+          <div className="md:col-span-2">
+            <AdminUserPhoneField
+              id="new-learner-phone"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
-              placeholder={t("lrn_new_ph_phone")}
+              onChange={setPhone}
+              label={t("lrn_new_phone")}
+              hint={t("adm_usr_phone_hint")}
+              placeholder={t("phone_placeholder")}
+              searchPlaceholder={t("phone_country_search")}
+              touched={phoneTouched || hasTriedSubmit}
+              errorMessage={phoneFieldError}
+              onBlur={() => setPhoneTouched(true)}
             />
-          </label>
-          <label className="text-sm">
-            {t("lrn_new_dob")}
-            <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} className="mt-1 w-full rounded-lg border bg-background px-3 py-2" />
-          </label>
+          </div>
+          {!isApiDataProvider() ? (
+            <label className="text-sm">
+              {t("lrn_new_dob")}
+              <input
+                type="date"
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
+              />
+            </label>
+          ) : null}
           <label className="text-sm">
             {t("lrn_new_email_optional")}
             <input
@@ -143,72 +194,84 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
               placeholder={t("lrn_new_ph_email")}
             />
           </label>
-          <label className="text-sm md:col-span-2">
-            {t("lrn_new_addr_optional")}
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
-              placeholder={t("lrn_new_ph_addr")}
-            />
-          </label>
+          {!isApiDataProvider() ? (
+            <label className="text-sm md:col-span-2">
+              {t("lrn_new_addr_optional")}
+              <input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
+                placeholder={t("lrn_new_ph_addr")}
+              />
+            </label>
+          ) : null}
           <label className="text-sm md:col-span-2">
             {t("lrn_new_class")}
-            <select value={classId} onChange={(e) => setClassId(e.target.value)} className="mt-1 w-full rounded-lg border bg-background px-3 py-2">
-              {adminClasses.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
+            <select
+              value={classId}
+              onChange={(e) => setClassId(e.target.value)}
+              disabled={classesLoading || adminClasses.length === 0}
+              className="mt-1 w-full rounded-lg border bg-background px-3 py-2 disabled:opacity-60"
+            >
+              {adminClasses.length === 0 ? (
+                <option value="">{t("lrn_new_no_class")}</option>
+              ) : (
+                adminClasses.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))
+              )}
             </select>
           </label>
         </div>
-        <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">{t("lrn_new_pin_info")}</div>
-        <label className="mt-3 inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={forcePinChange} onChange={(e) => setForcePinChange(e.target.checked)} />
-          {t("lrn_new_force_pin")}
-        </label>
+        <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100">
+          {isApiDataProvider() ? t("lrn_new_credentials_api_hint") : t("lrn_new_pin_info")}
+        </div>
+        {!isApiDataProvider() ? (
+          <label className="mt-3 inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={forcePinChange} onChange={(e) => setForcePinChange(e.target.checked)} />
+            {t("lrn_new_force_pin")}
+          </label>
+        ) : null}
 
         {hasTriedSubmit && errors.length > 0 ? (
           <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
             {errors.map((item) => (
-              <p key={item}>
-                - {item}
-              </p>
+              <p key={item}>- {item}</p>
             ))}
           </div>
         ) : null}
-        {saved ? (
-          <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700">
-            {t("lrn_new_saved")
-              .replace("{name}", fullName)
-              .replace("{className}", adminClasses.find((c) => c.id === classId)?.name ?? "")
-              .replace(
-                "{pinPolicy}",
-                forcePinChange ? t("lrn_new_pin_required") : t("lrn_new_pin_optional"),
-              )}
+
+        {submitError ? (
+          <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            {submitError}
           </div>
         ) : null}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" onClick={handleSubmit} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
-            <Save className="size-4" /> {t("lrn_new_submit")}
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={submitting || classesLoading || adminClasses.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            {submitting ? t("lrn_new_submitting") : t("lrn_new_submit")}
           </button>
           <Link href={importHref} className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm">
             {t("lrn_new_go_import")}
           </Link>
         </div>
-        {snipMessage ? (
-          <div
-            className={`mt-3 inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
-              snipType === "success" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-red-300 bg-red-50 text-red-700"
-            }`}
-          >
-            <span>{snipMessage}</span>
-            <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px]">{snipCounter}s</span>
-          </div>
-        ) : null}
       </div>
+
+      <ActionFeedbackOverlay
+        open={feedback.open}
+        status={feedback.status}
+        message={feedback.message}
+        closeLabel={t("action_feedback_ok")}
+        onClose={close}
+      />
     </div>
   )
 }

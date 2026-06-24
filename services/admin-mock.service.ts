@@ -39,6 +39,8 @@ export interface AdminPaymentItem {
   operatorReference?: string
   /** Lie l'encaissement a un apprenant (filtre historique fiche). */
   learnerId?: string
+  /** Identifiant (friendly) de la classe — utilise pour agreger l'encaisse par classe. */
+  classId?: string
   learnerName: string
   className: string
   amount: number
@@ -369,6 +371,33 @@ export function getAdminLearners(): AdminLearner[] {
   return DEFAULT_ADMIN_LEARNERS.map((l) => ({ ...l }))
 }
 
+export function addAdminLearner(input: {
+  fullName: string
+  phone: string
+  classId: string
+  email?: string
+  dateOfBirth?: string
+}): AdminLearner {
+  const list = getAdminLearners()
+  const cls = getClassById(input.classId)
+  const tuition = cls?.tuitionAmount ?? 162_000
+  const learner: AdminLearner = {
+    id: `l${Date.now()}`,
+    fullName: input.fullName.trim(),
+    phone: input.phone.trim(),
+    classId: input.classId,
+    createdAt: new Date().toISOString(),
+    dateOfBirth: input.dateOfBirth ?? "",
+    pinInitialized: true,
+    mustChangePin: true,
+    status: "active",
+    due: tuition,
+    paid: 0,
+  }
+  writeAdminLearners([learner, ...list])
+  return learner
+}
+
 export function updateLearner(
   learnerId: string,
   patch: Partial<Pick<AdminLearner, "fullName" | "phone" | "classId" | "dateOfBirth">>,
@@ -404,12 +433,12 @@ function syncPaymentsLearnerName(learnerId: string, fullName: string) {
   writeAdminPayments(updated)
 }
 
-/** Genere un PIN a 6 chiffres et impose un changement a la prochaine connexion. */
+/** Genere un PIN a 8 chiffres et impose un changement a la prochaine connexion. */
 export function resetLearnerPin(learnerId: string): { pin: string; phone: string } {
   const list = getAdminLearners()
   const idx = list.findIndex((l) => l.id === learnerId)
   if (idx === -1) throw new Error("LEARNER_NOT_FOUND")
-  const pin = String(Math.floor(100000 + Math.random() * 900000))
+  const pin = String(10_000_000 + Math.floor(Math.random() * 90_000_000))
   const next: AdminLearner = {
     ...list[idx],
     pinInitialized: true,
