@@ -4,6 +4,7 @@ import type { UserRole } from "@/types"
 export function getProfileHref(role: UserRole | null): string {
   if (role === "manager") return "/dashboard/manager/profil"
   if (role === "accountant") return "/dashboard/comptable/profil"
+  if (role === "collaborateur") return "/dashboard/collaborateur/profil"
   return "/dashboard/admin/parametres"
 }
 

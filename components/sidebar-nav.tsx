@@ -7,6 +7,8 @@ import {
   GraduationCap,
   CreditCard,
   AlertCircle,
+  Award,
+  Stamp,
   User,
   Wallet,
   Users,
@@ -18,6 +20,7 @@ import {
   LogOut,
   ChevronUp,
   ChevronDown,
+  Smartphone,
 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -28,7 +31,8 @@ import type { TranslationKey } from "@/services/i18n"
 import type { UserRole } from "@/types"
 
 interface NavItemDef {
-  labelKey: TranslationKey
+  labelKey?: TranslationKey
+  label?: string
   icon: React.ReactNode
   href?: string
   isLogout?: boolean
@@ -48,6 +52,8 @@ const managerSections: NavSectionDef[] = [
     items: [
       { labelKey: "mgr_nav_learners", icon: <GraduationCap className="size-4" />, href: "/dashboard/manager/apprenants" },
       { labelKey: "mgr_nav_payments", icon: <CreditCard className="size-4" />, href: "/dashboard/manager/paiements" },
+      { labelKey: "mgr_nav_certificates", icon: <Award className="size-4" />, href: "/dashboard/manager/certificats" },
+      { label: "Certificats de scolarité", icon: <School className="size-4" />, href: "/dashboard/manager/certificats-scolarite" },
       { labelKey: "mgr_nav_claims_val", icon: <AlertCircle className="size-4" />, href: "/dashboard/reclamations-validation" },
     ],
   },
@@ -57,6 +63,7 @@ const managerSections: NavSectionDef[] = [
       { labelKey: "mgr_nav_new", icon: <Receipt className="size-4" />, href: "/dashboard/manager/depenses/nouvelle" },
       { labelKey: "mgr_nav_list", icon: <ClipboardList className="size-4" />, href: "/dashboard/manager/depenses" },
       { labelKey: "nav_my_budget", icon: <Wallet className="size-4" />, href: "/dashboard/manager/budget" },
+      { labelKey: "mgr_nav_neero", icon: <Smartphone className="size-4" />, href: "/dashboard/manager/compte-neero" },
     ],
   },
   {
@@ -87,6 +94,31 @@ const accountantSections: NavSectionDef[] = [
   },
 ]
 
+const collaborateurSections: NavSectionDef[] = [
+  {
+    items: [
+      {
+        labelKey: "nav_dashboard",
+        icon: <LayoutDashboard className="size-4" />,
+        href: "/dashboard/collaborateur/apprenants",
+      },
+    ],
+  },
+  {
+    titleKey: "nav_collab_section",
+    items: [
+      { labelKey: "nav_learners", icon: <GraduationCap className="size-4" />, href: "/dashboard/collaborateur/apprenants" },
+      { labelKey: "nav_classes", icon: <School className="size-4" />, href: "/dashboard/collaborateur/classes" },
+    ],
+  },
+  {
+    items: [{ labelKey: "nav_profile", icon: <User className="size-4" />, href: "/dashboard/collaborateur/profil" }],
+  },
+  {
+    items: [{ labelKey: "nav_logout", icon: <LogOut className="size-4" />, isLogout: true }],
+  },
+]
+
 const adminSections: NavSectionDef[] = [
   {
     items: [{ labelKey: "nav_dashboard", icon: <LayoutDashboard className="size-4" />, href: "/dashboard" }],
@@ -98,6 +130,9 @@ const adminSections: NavSectionDef[] = [
       { labelKey: "nav_classes", icon: <School className="size-4" />, href: "/dashboard/admin/classes" },
       { labelKey: "nav_payments", icon: <CreditCard className="size-4" />, href: "/dashboard/admin/paiements" },
       { labelKey: "nav_claims", icon: <AlertCircle className="size-4" />, href: "/dashboard/reclamations-validation" },
+      { label: "Attestations de formation", icon: <Award className="size-4" />, href: "/dashboard/admin/certificats" },
+      { label: "Certificats de scolarité", icon: <School className="size-4" />, href: "/dashboard/admin/certificats-scolarite" },
+      { labelKey: "nav_cachets", icon: <Stamp className="size-4" />, href: "/dashboard/admin/cachets" },
     ],
   },
   {
@@ -111,7 +146,6 @@ const adminSections: NavSectionDef[] = [
     titleKey: "nav_block_admin",
     items: [
       { labelKey: "nav_users", icon: <Users className="size-4" />, href: "/dashboard/admin/utilisateurs" },
-      { labelKey: "nav_audit", icon: <ClipboardList className="size-4" />, href: "/dashboard/admin/audit" },
       { labelKey: "nav_settings", icon: <Settings className="size-4" />, href: "/dashboard/admin/parametres" },
     ],
   },
@@ -123,6 +157,7 @@ const adminSections: NavSectionDef[] = [
 export function getDashboardNavSections(role: UserRole | null): NavSectionDef[] {
   if (role === "manager") return managerSections
   if (role === "accountant") return accountantSections
+  if (role === "collaborateur") return collaborateurSections
   return adminSections
 }
 
@@ -156,7 +191,7 @@ export function SidebarNav({
       <ScrollArea className="flex-1 min-h-0 px-2">
         <nav className="flex flex-col gap-4 pb-4">
           {navSections.map((section) => (
-            <div key={`${section.titleKey ?? "group"}-${section.items[0]?.labelKey ?? "empty"}`}>
+            <div key={`${section.titleKey ?? "group"}-${section.items[0]?.labelKey ?? section.items[0]?.label ?? "empty"}`}>
               {section.titleKey ? (
                 <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-sidebar-primary">
                   {t(section.titleKey)}
@@ -164,7 +199,7 @@ export function SidebarNav({
               ) : null}
               <ul className="flex flex-col gap-0.5">
                 {section.items.map((item) => (
-                  <li key={item.labelKey}>
+                  <li key={item.href ?? item.labelKey ?? item.label}>
                     <button
                       onClick={() => {
                         if (item.isLogout) {
@@ -184,7 +219,7 @@ export function SidebarNav({
                       )}
                     >
                       {item.icon}
-                      {t(item.labelKey)}
+                      {item.label ?? (item.labelKey ? t(item.labelKey) : null)}
                     </button>
                   </li>
                 ))}

@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   CalendarDays,
   CheckCircle2,
@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { DataLoadError } from "@/components/data-load-error"
 import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,8 +43,10 @@ import { isApiDataProvider } from "@/lib/data-provider"
 import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
 import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
 import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
+import { computeNetTuition, useActiveScholarshipsQuery } from "@/hooks/use-active-scholarships"
 import { useLocale } from "@/hooks/use-locale"
 type PaymentSituation = "all" | "solde_ok" | "en_retard"
+type ScholarshipFilter = "all" | "holders" | "non_holders"
 
 function learnerCreatedInRange(createdAt: string, dateFrom: string, dateTo: string) {
   if (!dateFrom && !dateTo) return true
@@ -65,6 +68,9 @@ export default function AdminApprenantsPage() {
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
+  // Base de route déduite de l'URL courante : la même page sert /dashboard/admin
+  // et /dashboard/manager (réutilisation par tous les rôles staff).
+  const basePath = usePathname()
   const { learners: rawLearners, loading, error, refresh } = useAdminLearnersQuery()
   const { classes: adminClasses } = useAdminClassesQuery()
 
@@ -72,6 +78,7 @@ export default function AdminApprenantsPage() {
   // l'agrege depuis la source unique des paiements encaisses (success + manuel),
   // partagee avec la page Classes pour garantir la coherence des chiffres.
   const { paidByLearner } = useStaffPaidAggregates()
+  const { scholarshipByUser } = useActiveScholarshipsQuery()
 
   const adminLearners = useMemo(
     () =>
@@ -88,6 +95,7 @@ export default function AdminApprenantsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | AdminLearner["status"]>("all")
   const [classFilter, setClassFilter] = useState<string>("all")
   const [paymentSituation, setPaymentSituation] = useState<PaymentSituation>("all")
+  const [scholarshipFilter, setScholarshipFilter] = useState<ScholarshipFilter>("all")
   const [showMoreFilters, setShowMoreFilters] = useState(false)
 
   function resolveClassName(classId: string) {
@@ -101,10 +109,19 @@ export default function AdminApprenantsPage() {
     return learner.className || resolveClassName(learner.classId) || learner.classId
   }
 
-  function learnerDue(learner: AdminLearner) {
+  function learnerCatalogDue(learner: AdminLearner) {
     if (learner.due > 0) return learner.due
     const cls = adminClasses.find((c) => c.id === learner.classId)
     return cls?.tuitionAmount ?? 0
+  }
+
+  function learnerDue(learner: AdminLearner) {
+    const catalog = learnerCatalogDue(learner)
+    return computeNetTuition(catalog, scholarshipByUser[learner.id])
+  }
+
+  function learnerHasScholarship(learner: AdminLearner) {
+    return Boolean(scholarshipByUser[learner.id])
   }
 
   const classOptions = useMemo(() => adminClasses.map((c) => ({ id: c.id, name: c.name })), [adminClasses])
@@ -117,6 +134,8 @@ export default function AdminApprenantsPage() {
       if (statusFilter !== "all" && l.status !== statusFilter) return false
       if (classFilter !== "all" && l.classId !== classFilter) return false
       if (!paymentMatches(paymentSituation, l, dueAmount)) return false
+      if (scholarshipFilter === "holders" && !learnerHasScholarship(l)) return false
+      if (scholarshipFilter === "non_holders" && learnerHasScholarship(l)) return false
       if (!q) return true
       const cls = learnerClassLabel(l)
       return (
@@ -126,7 +145,7 @@ export default function AdminApprenantsPage() {
         cls.toLowerCase().includes(q)
       )
     })
-  }, [adminLearners, query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, adminClasses])
+  }, [adminLearners, query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, scholarshipFilter, adminClasses, scholarshipByUser])
 
   const hasActiveFilters = useMemo(
     () =>
@@ -136,15 +155,25 @@ export default function AdminApprenantsPage() {
           dateTo ||
           statusFilter !== "all" ||
           classFilter !== "all" ||
-          paymentSituation !== "all",
+          paymentSituation !== "all" ||
+          scholarshipFilter !== "all",
       ),
-    [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation],
+    [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, scholarshipFilter],
   )
   const advancedFilterCount = useMemo(() => {
     let count = 0
     if (classFilter !== "all") count += 1
+    if (scholarshipFilter !== "all") count += 1
     return count
-  }, [classFilter])
+  }, [classFilter, scholarshipFilter])
+
+  const scholarshipCounts = useMemo(() => {
+    let holders = 0
+    for (const l of adminLearners) {
+      if (learnerHasScholarship(l)) holders += 1
+    }
+    return { all: adminLearners.length, holders, nonHolders: adminLearners.length - holders }
+  }, [adminLearners, scholarshipByUser])
 
   const paymentCounts = useMemo(() => {
     let fullyPaid = 0
@@ -155,7 +184,7 @@ export default function AdminApprenantsPage() {
       else outstanding += 1
     }
     return { all: adminLearners.length, fullyPaid, outstanding }
-  }, [adminLearners, adminClasses])
+  }, [adminLearners, adminClasses, scholarshipByUser])
 
   const totals = useMemo(() => {
     const totalDue = filtered.reduce((s, l) => s + learnerDue(l), 0)
@@ -173,7 +202,7 @@ export default function AdminApprenantsPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, pageSize])
+  }, [query, dateFrom, dateTo, statusFilter, classFilter, paymentSituation, scholarshipFilter, pageSize])
 
   useEffect(() => {
     if (page > pageCount) setPage(pageCount)
@@ -186,6 +215,19 @@ export default function AdminApprenantsPage() {
     setStatusFilter("all")
     setClassFilter("all")
     setPaymentSituation("all")
+    setScholarshipFilter("all")
+  }
+
+  const [retrying, setRetrying] = useState(false)
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    await refresh()
+    setRetrying(false)
+  }, [refresh])
+
+  // Erreur "plein écran" quand le chargement a échoué et qu'il n'y a rien à afficher.
+  if (error && adminLearners.length === 0) {
+    return <DataLoadError fullScreen onRetry={handleRetry} retrying={retrying} />
   }
 
   return (
@@ -200,7 +242,7 @@ export default function AdminApprenantsPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => router.push("/dashboard/admin/apprenants/nouveau")}
+                onClick={() => router.push(`${basePath}/nouveau`)}
                 className="inline-flex items-center gap-2 rounded-lg bg-primary-foreground px-3 py-1.5 text-xs font-semibold text-primary shadow-sm transition-colors hover:bg-white"
               >
                 <User className="size-3.5" />
@@ -208,7 +250,7 @@ export default function AdminApprenantsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => router.push("/dashboard/admin/apprenants/import")}
+                onClick={() => router.push(`${basePath}/import`)}
                 className="inline-flex items-center gap-2 rounded-lg border border-primary-foreground/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-primary-foreground backdrop-blur hover:bg-white/20"
               >
                 {t("adm_learn_import")}
@@ -370,6 +412,53 @@ export default function AdminApprenantsPage() {
                         className={cn(
                           "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none",
                           paymentSituation === value ? "bg-black/10" : "bg-muted",
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[11px] font-medium text-muted-foreground">{t("adm_learn_sch_filter")}</span>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { value: "all" as const, label: t("adm_learn_opt_pay_all"), count: scholarshipCounts.all, icon: Users },
+                      {
+                        value: "holders" as const,
+                        label: t("adm_learn_opt_sch_holders"),
+                        count: scholarshipCounts.holders,
+                        icon: GraduationCap,
+                      },
+                      {
+                        value: "non_holders" as const,
+                        label: t("adm_learn_opt_sch_none"),
+                        count: scholarshipCounts.nonHolders,
+                        icon: User,
+                      },
+                    ] as const
+                  ).map(({ value, label, count, icon: Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setScholarshipFilter(value)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                        scholarshipFilter === value
+                          ? value === "holders"
+                            ? "border-sky-500/50 bg-sky-500/15 text-sky-950 dark:text-sky-100"
+                            : "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
+                          : "border-border bg-background text-muted-foreground hover:border-border/80 hover:bg-muted/40",
+                      )}
+                    >
+                      <Icon className="size-3.5 shrink-0 opacity-80" />
+                      {label}
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums leading-none",
+                          scholarshipFilter === value ? "bg-black/10" : "bg-muted",
                         )}
                       >
                         {count}
@@ -552,6 +641,7 @@ export default function AdminApprenantsPage() {
                   const dueAmount = learnerDue(l)
                   const ratio = dueAmount > 0 ? Math.min(100, Math.round((l.paid / dueAmount) * 100)) : 100
                   const reste = Math.max(0, dueAmount - l.paid)
+                  const scholarship = scholarshipByUser[l.id]
                   return (
                     <TableRow key={l.id} className="group">
                       <TableCell className="w-[7.5rem] max-w-[7.5rem] whitespace-normal py-1.5">
@@ -568,6 +658,11 @@ export default function AdminApprenantsPage() {
                           >
                             {l.id}
                           </p>
+                          {scholarship ? (
+                            <Badge className="mt-1 bg-sky-500/15 text-[9px] text-sky-800">
+                              {scholarship.isFull ? t("sch_badge_full") : t("sch_badge_partial")}
+                            </Badge>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{learnerClassLabel(l)}</TableCell>
@@ -608,7 +703,7 @@ export default function AdminApprenantsPage() {
                       </TableCell>
                       <TableCell className="sticky right-0 z-10 bg-card shadow-[inset_1px_0_0_hsl(var(--border))] group-hover:bg-muted/30">
                         <Button size="sm" variant="outline" asChild className="w-full sm:w-auto">
-                          <Link href={`/dashboard/admin/apprenants/${l.id}`}>{t("adm_learn_btn_sheet")}</Link>
+                          <Link href={`${basePath}/${l.id}`}>{t("adm_learn_btn_sheet")}</Link>
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -633,6 +728,7 @@ export default function AdminApprenantsPage() {
               const dueAmount = learnerDue(l)
               const ratio = dueAmount > 0 ? Math.min(100, Math.round((l.paid / dueAmount) * 100)) : 100
               const reste = Math.max(0, dueAmount - l.paid)
+              const scholarship = scholarshipByUser[l.id]
               return (
                 <div
                   key={l.id}
@@ -646,6 +742,11 @@ export default function AdminApprenantsPage() {
                       <p className="truncate font-mono text-[10px] text-muted-foreground" title={l.id}>
                         {l.id}
                       </p>
+                      {scholarship ? (
+                        <Badge className="mt-1 bg-sky-500/15 text-[10px] text-sky-800">
+                          {scholarship.isFull ? t("sch_badge_full") : t("sch_badge_partial")}
+                        </Badge>
+                      ) : null}
                     </div>
                     {l.status === "active" ? (
                       <Badge className="bg-emerald-500/15 text-emerald-800">{t("adm_st_active")}</Badge>
@@ -687,7 +788,7 @@ export default function AdminApprenantsPage() {
                   </div>
                   <p className="mt-1 text-[11px] text-muted-foreground">{ratio}%</p>
                   <Button className="mt-3 w-full" variant="outline" asChild>
-                    <Link href={`/dashboard/admin/apprenants/${l.id}`}>{t("adm_learn_btn_view")}</Link>
+                    <Link href={`${basePath}/${l.id}`}>{t("adm_learn_btn_view")}</Link>
                   </Button>
                 </div>
               )

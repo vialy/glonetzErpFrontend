@@ -2,9 +2,10 @@
 
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
-import { useParams } from "next/navigation"
+import { useParams, usePathname, useRouter } from "next/navigation"
 import {
   ArrowLeft,
+  Award,
   Banknote,
   Ban,
   CheckCircle2,
@@ -17,9 +18,11 @@ import {
   Pencil,
   Phone,
   Receipt,
+  Trash2,
   User,
   Wrench,
 } from "lucide-react"
+import { DetailPageSkeleton } from "@/components/loading/data-skeletons"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
 import {
@@ -45,6 +48,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DeskPaymentDialog } from "@/components/desk-payment/desk-payment-dialog"
+import { ScholarshipDialog } from "@/components/scholarship/scholarship-dialog"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import {
   Select,
@@ -66,9 +70,27 @@ import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
 import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useAdminPayments } from "@/hooks/use-admin-payments"
 import { useLocale } from "@/hooks/use-locale"
+import { useAuth } from "@/hooks/use-auth"
+import {
+  canDeleteLearner,
+  canEditLearner,
+  canManageScholarships,
+  canRecordDeskPayment,
+  canResetLearnerPassword,
+  canSuspendLearner,
+  canViewClassBalances,
+} from "@/lib/learner-permissions"
 import { learnersService } from "@/domains/learners"
+import { LearnerClassTimeline } from "@/components/learners/learner-class-timeline"
 import { getApiErrorMessage } from "@/lib/api-error"
 import { isApiDataProvider } from "@/lib/data-provider"
+import {
+  fetchClassPaymentSummary,
+  grantScholarship,
+  revokeScholarship,
+  scholarshipErrorMessage,
+  type ClassPaymentSummary,
+} from "@/services/scholarships.service"
 import {
   fetchStaffPayments,
   getStaffPaymentById,
@@ -209,8 +231,21 @@ function payStatusBadge(p: AdminPaymentItem) {
 
 export default function AdminApprenantFichePage() {
   const { t } = useLocale()
+  const { role } = useAuth()
   const params = useParams<{ id: string }>()
   const id = params?.id ?? ""
+  // Base de rôle déduite de l'URL (/dashboard/admin ou /dashboard/manager) :
+  // la même fiche sert tous les rôles staff. `learnersBase` = liste des apprenants.
+  const roleBase = (usePathname() ?? "/dashboard/admin/apprenants").split("/apprenants")[0]
+  const learnersBase = `${roleBase}/apprenants`
+  const router = useRouter()
+  const hasClassesRoute = canViewClassBalances(role)
+  const allowEdit = canEditLearner(role)
+  const allowDelete = canDeleteLearner(role)
+  const allowSuspend = canSuspendLearner(role)
+  const allowDeskPayment = canRecordDeskPayment(role)
+  const allowResetPin = canResetLearnerPassword(role)
+  const allowScholarships = canManageScholarships(role)
   const { learners, loading: learnersLoading } = useAdminLearnersQuery()
   const { classes: adminClasses } = useAdminClassesQuery()
   const paymentsVersion = useAdminPayments()
@@ -305,6 +340,7 @@ export default function AdminApprenantFichePage() {
   const [formPhone, setFormPhone] = useState("")
   const [formClassId, setFormClassId] = useState("")
   const [formDob, setFormDob] = useState("")
+  const [formPlaceOfBirth, setFormPlaceOfBirth] = useState("")
 
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -312,6 +348,41 @@ export default function AdminApprenantFichePage() {
   const [paymentDetail, setPaymentDetail] = useState<AdminPaymentItem | null>(null)
   const [pdfLoading, setPdfLoading] = useState(false)
   const [deskOpen, setDeskOpen] = useState(false)
+  const [scholarshipOpen, setScholarshipOpen] = useState(false)
+  const [paymentSummary, setPaymentSummary] = useState<ClassPaymentSummary | null>(null)
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+  const [transferPreview, setTransferPreview] = useState<{
+    amount: number
+    hasScholarship: boolean
+    fromClassName: string
+    toClassName: string
+  } | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteBlockedOpen, setDeleteBlockedOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  useEffect(() => {
+    if (!learner || !isApiDataProvider()) {
+      setPaymentSummary(null)
+      return
+    }
+    let cancelled = false
+    const load = () => {
+      fetchClassPaymentSummary(learner.id, learner.classId)
+        .then((summary) => {
+          if (!cancelled) setPaymentSummary(summary)
+        })
+        .catch(() => {
+          if (!cancelled) setPaymentSummary(null)
+        })
+    }
+    load()
+    window.addEventListener("admin-payments-updated", load)
+    return () => {
+      cancelled = true
+      window.removeEventListener("admin-payments-updated", load)
+    }
+  }, [learner])
 
   function openEdit() {
     if (!learner) return
@@ -319,6 +390,7 @@ export default function AdminApprenantFichePage() {
     setFormPhone(learner.phone)
     setFormClassId(learner.classId)
     setFormDob(learner.dateOfBirth)
+    setFormPlaceOfBirth(learner.placeOfBirth ?? "")
     setEditOpen(true)
     setBanner(null)
   }
@@ -326,55 +398,153 @@ export default function AdminApprenantFichePage() {
   const editIsDirty = useMemo(() => {
     if (!learner) return false
     if (isApiDataProvider()) {
-      return formName.trim() !== learner.fullName.trim() || formClassId !== learner.classId
+      return (
+        formName.trim() !== learner.fullName.trim() ||
+        formClassId !== learner.classId ||
+        formDob !== (learner.dateOfBirth ?? "") ||
+        formPlaceOfBirth.trim() !== (learner.placeOfBirth ?? "").trim()
+      )
     }
     return (
       formName.trim() !== learner.fullName.trim() ||
       formPhone.trim() !== learner.phone.trim() ||
       formClassId !== learner.classId ||
-      formDob !== (learner.dateOfBirth ?? "")
+      formDob !== (learner.dateOfBirth ?? "") ||
+      formPlaceOfBirth.trim() !== (learner.placeOfBirth ?? "").trim()
     )
-  }, [learner, formName, formPhone, formClassId, formDob])
+  }, [learner, formName, formPhone, formClassId, formDob, formPlaceOfBirth])
+
+  async function performSave(transferPayments: boolean) {
+    if (!learner) return
+    setSaving(true)
+    const outcome = await run(
+      async () => {
+        if (!formName.trim()) throw new Error("Nom obligatoire")
+        if (!formPhone.trim()) throw new Error("Telephone obligatoire")
+        if (!formClassId) throw new Error("Classe obligatoire")
+
+        if (isApiDataProvider()) {
+          const classChanged = formClassId !== learner.classId
+          const updated = await learnersService.update(learner.id, {
+            name: formName.trim(),
+            ...(classChanged ? { classId: formClassId, transferPayments } : {}),
+            ...(formDob !== (learner.dateOfBirth ?? "") ? { dateOfBirth: formDob } : {}),
+            ...(formPlaceOfBirth.trim() !== (learner.placeOfBirth ?? "").trim()
+              ? { placeOfBirth: formPlaceOfBirth.trim() }
+              : {}),
+          })
+          if (!updated) throw new Error(t("lrn_fiche_edit_fail"))
+          setLearner(updated)
+          if (classChanged && transferPayments) {
+            window.dispatchEvent(new Event("admin-payments-updated"))
+          }
+          return updated
+        }
+
+        const updated = updateLearner(learner.id, {
+          fullName: formName.trim(),
+          phone: formPhone.trim(),
+          classId: formClassId,
+          dateOfBirth: formDob,
+          placeOfBirth: formPlaceOfBirth.trim(),
+        })
+        if (formClassId !== learner.classId) {
+          const { LearnerEnrollmentService } = await import("@/services/learner-enrollment.service")
+          LearnerEnrollmentService.recordManualClassChange(learner.id, learner.classId, formClassId)
+        }
+        setLearner(updated)
+        return updated
+      },
+      {
+        loading: t("lrn_fiche_edit_saving"),
+        success: t("lrn_fiche_edit_ok"),
+        error: t("lrn_fiche_edit_fail"),
+      },
+    )
+
+    setSaving(false)
+    if (outcome.ok) {
+      setEditOpen(false)
+      setTransferDialogOpen(false)
+      setTransferPreview(null)
+    } else if (outcome.error instanceof Error) {
+      setBanner({
+        type: "error",
+        text: getApiErrorMessage(outcome.error, outcome.error.message),
+      })
+    }
+  }
 
   function saveEdit() {
     if (!learner) return
-    setSaving(true)
+    void (async () => {
+      if (!formName.trim()) {
+        setBanner({ type: "error", text: "Nom obligatoire" })
+        return
+      }
+      if (!formPhone.trim()) {
+        setBanner({ type: "error", text: "Telephone obligatoire" })
+        return
+      }
+      if (!formClassId) {
+        setBanner({ type: "error", text: "Classe obligatoire" })
+        return
+      }
+
+      const classChanged = formClassId !== learner.classId
+      if (isApiDataProvider() && classChanged) {
+        const summary = await fetchClassPaymentSummary(learner.id, learner.classId)
+        const amount = (summary?.paid ?? 0) + (summary?.pending ?? 0)
+        const hasScholarship = Boolean(summary?.scholarship)
+        if (amount > 0 || hasScholarship) {
+          const fromClassName =
+            adminClasses.find((c) => c.id === learner.classId)?.name ??
+            learner.className ??
+            learner.classId
+          const toClassName =
+            adminClasses.find((c) => c.id === formClassId)?.name ?? formClassId
+          setTransferPreview({ amount, hasScholarship, fromClassName, toClassName })
+          setTransferDialogOpen(true)
+          return
+        }
+      }
+
+      await performSave(false)
+    })()
+  }
+
+  const successfulPaymentCount = useMemo(
+    () => paymentHistory.filter((p) => p.status === "success" || p.status === "manual").length,
+    [paymentHistory],
+  )
+
+  function requestDelete() {
+    if (!learner) return
+    if (successfulPaymentCount > 0) {
+      setDeleteBlockedOpen(true)
+      return
+    }
+    setDeleteDialogOpen(true)
+  }
+
+  function confirmDelete() {
+    if (!learner) return
+    setDeleting(true)
     void (async () => {
       const outcome = await run(
         async () => {
-          if (!formName.trim()) throw new Error("Nom obligatoire")
-          if (!formPhone.trim()) throw new Error("Telephone obligatoire")
-          if (!formClassId) throw new Error("Classe obligatoire")
-
-          if (isApiDataProvider()) {
-            const updated = await learnersService.update(learner.id, {
-              name: formName.trim(),
-              ...(formClassId !== learner.classId ? { classId: formClassId } : {}),
-            })
-            if (!updated) throw new Error(t("lrn_fiche_edit_fail"))
-            setLearner(updated)
-            return updated
-          }
-
-          const updated = updateLearner(learner.id, {
-            fullName: formName.trim(),
-            phone: formPhone.trim(),
-            classId: formClassId,
-            dateOfBirth: formDob,
-          })
-          setLearner(updated)
-          return updated
+          await learnersService.remove(learner.id)
         },
         {
           loading: t("lrn_fiche_edit_saving"),
-          success: t("lrn_fiche_edit_ok"),
-          error: t("lrn_fiche_edit_fail"),
+          success: t("lrn_fiche_delete_ok"),
+          error: t("lrn_fiche_delete_fail"),
         },
       )
-
-      setSaving(false)
+      setDeleting(false)
       if (outcome.ok) {
-        setEditOpen(false)
+        setDeleteDialogOpen(false)
+        router.push(learnersBase)
       } else if (outcome.error instanceof Error) {
         setBanner({
           type: "error",
@@ -470,21 +640,16 @@ export default function AdminApprenantFichePage() {
   }
 
   if (loadingDetail) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-10 text-sm text-muted-foreground md:px-6">
-        <Loader2 className="size-4 animate-spin" />
-        {t("adm_set_loading")}
-      </div>
-    )
+    return <DetailPageSkeleton />
   }
 
   if (!learner) {
     return (
       <div className="px-4 py-8 md:px-6 lg:px-8">
-        <MobileBackButton fallbackHref="/dashboard/admin/apprenants" />
+        <MobileBackButton fallbackHref={learnersBase} />
         <p className="mt-4 text-muted-foreground">Apprenant introuvable.</p>
         <Button asChild className="mt-4" variant="outline">
-          <Link href="/dashboard/admin/apprenants">Retour liste</Link>
+          <Link href={learnersBase}>Retour liste</Link>
         </Button>
       </div>
     )
@@ -499,30 +664,53 @@ export default function AdminApprenantFichePage() {
     (!isApiDataProvider() ? getClassById(learner?.classId ?? "")?.name : "") ||
     learner?.classId ||
     ""
+  const catalogFee = adminClass?.tuitionAmount ?? 0
   const dueAmount =
-    learner && learner.due > 0
-      ? learner.due
-      : (adminClass?.tuitionAmount ?? 0)
-  // En mode API, /staff/users/:id ne renvoie pas le total deja paye : on le
-  // derive des paiements reels (encaisses : reussis + versements guichet).
-  const paidAmount = isApiDataProvider()
-    ? paymentHistory
-        .filter((p) => p.status === "success" || p.status === "manual")
-        .reduce((sum, p) => sum + p.amount, 0)
-    : (learner?.paid ?? 0)
-  const ratio = dueAmount > 0 ? Math.min(100, Math.round((paidAmount / dueAmount) * 100)) : 0
-  const reste = Math.max(0, dueAmount - paidAmount)
+    paymentSummary != null
+      ? paymentSummary.expected
+      : learner && learner.due > 0
+        ? learner.due
+        : catalogFee
+  const scholarshipDiscount = paymentSummary?.scholarshipDiscount ?? 0
+  const activeScholarship = paymentSummary?.scholarship ?? null
+  // Pension et encaisse de la classe actuelle uniquement (aligne avec le parcours).
+  const paidAmount =
+    paymentSummary != null
+      ? paymentSummary.paid
+      : paymentHistory
+          .filter(
+            (p) =>
+              (p.status === "success" || p.status === "manual") &&
+              (p.classId === learner?.classId || p.className === classLabel),
+          )
+          .reduce((sum, p) => sum + p.amount, 0)
+  const ratio = dueAmount > 0 ? Math.min(100, Math.round((paidAmount / dueAmount) * 100)) : paidAmount > 0 ? 100 : 0
+  const reste =
+    paymentSummary != null ? paymentSummary.remaining : Math.max(0, dueAmount - paidAmount)
+
+  const timelineFinancialLabels = {
+    catalogTuition: t("sch_catalog_line"),
+    scholarship: t("sch_discount_line"),
+    netDue: t("sch_net_due"),
+    scholarshipFull: t("sch_timeline_full"),
+    scholarshipBadgeFull: t("sch_timeline_badge_full"),
+    scholarshipBadgePartial: t("sch_timeline_badge_partial"),
+    tuition: "Pension",
+    paid: "Paye",
+    remaining: "Reste",
+    payments: "Paiements",
+  }
 
   return (
     <div className="px-4 pb-10 pt-4 md:px-6 lg:px-8">
-      <MobileBackButton fallbackHref="/dashboard/admin/apprenants" />
+      <MobileBackButton fallbackHref={learnersBase} />
       <AdminPageHeader
         title={learner.fullName}
         subtitle={`Fiche apprenant · ${learner.id}`}
         gradientClassName="from-violet-600 to-fuchsia-600"
         actions={
           <Button variant="outline" size="sm" asChild className="border-primary-foreground/40 bg-white/10 text-primary-foreground hover:bg-white/20">
-            <Link href="/dashboard/admin/apprenants">
+            <Link href={learnersBase}>
               <ArrowLeft className="mr-2 size-4" />
               Liste
             </Link>
@@ -547,21 +735,63 @@ export default function AdminApprenantFichePage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Identite</h2>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={openEdit}>
-                <Pencil className="mr-2 size-3.5" />
-                Modifier
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setPinDialogOpen(true)}>
-                <KeyRound className="mr-2 size-3.5" />
-                {t("lrn_fiche_reset_pwd_btn")}
-              </Button>
-              {reste > 0 ? (
+              {allowEdit ? (
+                <Button size="sm" variant="outline" onClick={openEdit}>
+                  <Pencil className="mr-2 size-3.5" />
+                  Modifier
+                </Button>
+              ) : null}
+              {allowResetPin ? (
+                <Button size="sm" variant="outline" onClick={() => setPinDialogOpen(true)}>
+                  <KeyRound className="mr-2 size-3.5" />
+                  {t("lrn_fiche_reset_pwd_btn")}
+                </Button>
+              ) : null}
+              {allowDelete ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  onClick={requestDelete}
+                >
+                  <Trash2 className="mr-2 size-3.5" />
+                  {t("lrn_fiche_delete_btn")}
+                </Button>
+              ) : null}
+              {allowDeskPayment && reste > 0 ? (
                 <Button size="sm" onClick={() => setDeskOpen(true)}>
                   <Banknote className="mr-2 size-3.5" />
                   Versement guichet
                 </Button>
               ) : null}
-              {learner.status === "active" ? (
+              {allowScholarships && hasClassesRoute && !activeScholarship ? (
+                <Button size="sm" variant="outline" onClick={() => setScholarshipOpen(true)}>
+                  <Award className="mr-2 size-3.5" />
+                  {t("sch_grant_action")}
+                </Button>
+              ) : null}
+              {allowScholarships && hasClassesRoute && activeScholarship ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-amber-700"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await revokeScholarship(activeScholarship.scholarshipId)
+                        setBanner({ type: "success", text: t("sch_success_revoke") })
+                        window.dispatchEvent(new Event("admin-payments-updated"))
+                        window.dispatchEvent(new Event("admin-scholarships-updated"))
+                      } catch (e) {
+                        setBanner({ type: "error", text: scholarshipErrorMessage(e) })
+                      }
+                    })()
+                  }}
+                >
+                  {t("sch_revoke_btn")}
+                </Button>
+              ) : null}
+              {allowSuspend && learner.status === "active" ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -574,7 +804,7 @@ export default function AdminApprenantFichePage() {
                   <Ban className="mr-2 size-3.5" />
                   Suspendre
                 </Button>
-              ) : (
+              ) : allowSuspend ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -587,7 +817,7 @@ export default function AdminApprenantFichePage() {
                   <CheckCircle2 className="mr-2 size-3.5" />
                   Activer
                 </Button>
-              )}
+              ) : null}
             </div>
           </div>
           <dl className="mt-4 space-y-3 text-sm">
@@ -605,9 +835,9 @@ export default function AdminApprenantFichePage() {
               <GraduationCap className="size-4 text-muted-foreground" />
               <dt className="text-muted-foreground">Classe</dt>
               <dd>
-                {learner.classId ? (
+                {learner.classId && hasClassesRoute ? (
                   <Link
-                    href={`/dashboard/admin/classes/${learner.classId}`}
+                    href={`${roleBase}/classes/${learner.classId}`}
                     className="font-medium text-primary underline-offset-4 hover:underline"
                   >
                     {classLabel}
@@ -619,7 +849,11 @@ export default function AdminApprenantFichePage() {
             </div>
             <div className="text-sm">
               <span className="text-muted-foreground">Date de naissance : </span>
-              <span className="font-medium">{learner.dateOfBirth}</span>
+              <span className="font-medium">{learner.dateOfBirth || "—"}</span>
+            </div>
+            <div className="text-sm">
+              <span className="text-muted-foreground">Lieu de naissance : </span>
+              <span className="font-medium">{learner.placeOfBirth || "—"}</span>
             </div>
             <div className="flex flex-wrap gap-2 pt-2">
               {learner.status === "active" ? (
@@ -629,15 +863,35 @@ export default function AdminApprenantFichePage() {
               )}
               {learner.pinInitialized ? <Badge variant="outline">PIN initialise</Badge> : null}
               {learner.mustChangePin ? <Badge variant="destructive">PIN a changer</Badge> : null}
+              {activeScholarship ? (
+                <Badge className="bg-sky-500/15 text-sky-800">
+                  {activeScholarship.isFull ? t("sch_badge_full") : t("sch_badge_partial")}
+                </Badge>
+              ) : null}
             </div>
           </dl>
         </div>
 
         <div className="rounded-2xl border bg-card p-5 shadow-sm">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Paiement (synthese)</h2>
+          {classLabel ? (
+            <p className="mt-1 text-xs text-muted-foreground">Classe actuelle : {classLabel}</p>
+          ) : null}
           <div className="mt-4 space-y-2 text-sm">
+            {scholarshipDiscount > 0 ? (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{t("sch_catalog_line")}</span>
+                <span className="font-semibold tabular-nums">{formatFcfa(catalogFee)}</span>
+              </div>
+            ) : null}
+            {scholarshipDiscount > 0 ? (
+              <div className="flex justify-between text-sky-700">
+                <span>{t("sch_discount_line")}</span>
+                <span className="font-semibold tabular-nums">−{formatFcfa(scholarshipDiscount)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Du</span>
+              <span className="text-muted-foreground">{scholarshipDiscount > 0 ? t("sch_net_due") : "Du"}</span>
               <span className="font-semibold tabular-nums">{formatFcfa(dueAmount)}</span>
             </div>
             <div className="flex justify-between">
@@ -655,10 +909,22 @@ export default function AdminApprenantFichePage() {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              {dueAmount > 0 ? `${ratio}% du montant regle` : "Pension de classe non renseignee"}
+              {dueAmount > 0
+                ? `${ratio}% du montant regle`
+                : activeScholarship
+                  ? t("sch_badge_full")
+                  : "Pension de classe non renseignee"}
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <LearnerClassTimeline
+          learnerId={learner.id}
+          formatFcfa={formatFcfa}
+          financialLabels={timelineFinancialLabels}
+        />
       </div>
 
       {/* Historique paiements */}
@@ -669,7 +935,7 @@ export default function AdminApprenantFichePage() {
             <h2 className="text-sm font-semibold">Historique des paiements</h2>
             <span className="text-xs text-muted-foreground">({paymentHistory.length})</span>
           </div>
-          {reste > 0 ? (
+          {allowDeskPayment && reste > 0 ? (
             <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => setDeskOpen(true)}>
               <Banknote className="mr-2 size-3.5" />
               Versement guichet
@@ -827,7 +1093,7 @@ export default function AdminApprenantFichePage() {
             <DialogTitle>Modifier l&apos;apprenant</DialogTitle>
             <DialogDescription>
               {isApiDataProvider()
-                ? "Nom et classe modifiables. Le telephone ne peut pas etre change apres creation."
+                ? "Nom et classe modifiables. Changer la classe ici corrige l'inscription sans ajouter d'historique. Utilisez la promotion pour monter un apprenant en classe."
                 : "Mise a jour locale (mock admin). Les paiements affichent le meme nom."}
             </DialogDescription>
           </DialogHeader>
@@ -866,6 +1132,14 @@ export default function AdminApprenantFichePage() {
               <Label htmlFor="edit-dob">Date de naissance</Label>
               <Input id="edit-dob" type="date" value={formDob} onChange={(e) => setFormDob(e.target.value)} />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-pob">Lieu de naissance</Label>
+              <Input
+                id="edit-pob"
+                value={formPlaceOfBirth}
+                onChange={(e) => setFormPlaceOfBirth(e.target.value)}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>
@@ -884,6 +1158,88 @@ export default function AdminApprenantFichePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={transferDialogOpen}
+        onOpenChange={(open) => {
+          setTransferDialogOpen(open)
+          if (!open) setTransferPreview(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("lrn_fiche_transfer_title")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  {t("lrn_fiche_transfer_desc")
+                    .replace("{amount}", formatFcfa(transferPreview?.amount ?? 0))
+                    .replace("{fromClass}", transferPreview?.fromClassName ?? "—")
+                    .replace("{toClass}", transferPreview?.toClassName ?? "—")}
+                </p>
+                {transferPreview?.hasScholarship ? (
+                  <p className="text-amber-800 dark:text-amber-200">{t("lrn_fiche_transfer_scholarship")}</p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              className="w-full"
+              disabled={saving}
+              onClick={() => void performSave(true)}
+            >
+              {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("lrn_fiche_transfer_yes")}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={saving}
+              onClick={() => void performSave(false)}
+            >
+              {t("lrn_fiche_transfer_no")}
+            </Button>
+            <AlertDialogCancel disabled={saving}>{t("lrn_fiche_transfer_cancel")}</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("lrn_fiche_delete_title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("lrn_fiche_delete_desc").replace("{name}", learner?.fullName ?? "")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>{t("lrn_fiche_delete_cancel")}</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={deleting}
+              onClick={confirmDelete}
+            >
+              {deleting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              {t("lrn_fiche_delete_confirm")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteBlockedOpen} onOpenChange={setDeleteBlockedOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("lrn_fiche_delete_blocked_title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("lrn_fiche_delete_blocked_desc").replace("{count}", String(successfulPaymentCount))}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction>{t("lrn_fiche_delete_blocked_ok")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={pinDialogOpen} onOpenChange={setPinDialogOpen}>
         <AlertDialogContent>
@@ -919,28 +1275,58 @@ export default function AdminApprenantFichePage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <DeskPaymentDialog
-        open={deskOpen}
-        onClose={() => setDeskOpen(false)}
-        onSuccess={() => setBanner({ type: "success", text: "Versement enregistre." })}
-        fullName={learner.fullName}
-        remaining={reste}
-        onRecord={async (amount, method, note) => {
-          if (!Number.isFinite(amount) || amount <= 0) throw new Error("INVALID_AMOUNT")
-          if (amount > reste) throw new Error("OVERPAY")
-          if (isApiDataProvider()) {
-            await recordManualPayment({
-              userId: learner.id,
-              classId: learner.classId,
-              amount,
-              note,
-            })
-          } else {
-            recordAdminDeskPayment(learner.id, amount, method, note)
-          }
-        }}
-        t={t}
-      />
+      {allowDeskPayment ? (
+        <DeskPaymentDialog
+          open={deskOpen}
+          onClose={() => setDeskOpen(false)}
+          onSuccess={() => setBanner({ type: "success", text: "Versement enregistre." })}
+          fullName={learner.fullName}
+          remaining={reste}
+          onRecord={async (amount, method, note) => {
+            if (!Number.isFinite(amount) || amount <= 0) throw new Error("INVALID_AMOUNT")
+            if (amount > reste) throw new Error("OVERPAY")
+            if (isApiDataProvider()) {
+              await recordManualPayment({
+                userId: learner.id,
+                classId: learner.classId,
+                amount,
+                note,
+              })
+            } else {
+              recordAdminDeskPayment(learner.id, amount, method, note)
+            }
+          }}
+          t={t}
+        />
+      ) : null}
+
+      {hasClassesRoute && learner ? (
+        <ScholarshipDialog
+          open={scholarshipOpen}
+          onClose={() => setScholarshipOpen(false)}
+          onSuccess={() => {
+            setBanner({ type: "success", text: t("sch_success_grant") })
+            window.dispatchEvent(new Event("admin-payments-updated"))
+            window.dispatchEvent(new Event("admin-scholarships-updated"))
+          }}
+          fullName={learner.fullName}
+          catalogFee={catalogFee}
+          onGrant={async (type, value, reason) => {
+            try {
+              await grantScholarship({
+                userId: learner.id,
+                classId: learner.classId,
+                type,
+                value,
+                reason,
+              })
+            } catch (e) {
+              throw new Error(scholarshipErrorMessage(e))
+            }
+          }}
+          t={t}
+        />
+      ) : null}
 
       <ActionFeedbackOverlay
         open={feedback.open}

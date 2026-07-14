@@ -15,5 +15,10 @@ export function parseStaffSessionCookie(value: string | undefined | null): Login
 }
 
 export function isStaffDashboardRole(role: unknown): role is Exclude<UserRole, "student"> {
-  return role === "admin" || role === "manager" || role === "accountant"
+  return (
+    role === "admin" ||
+    role === "manager" ||
+    role === "accountant" ||
+    role === "collaborateur"
+  )
 }

@@ -10,11 +10,13 @@ export interface ManagerExpenseRecord {
   categoryLabel: string
   amount: number
   currencyCode: string
-  paymentMethod: ManagerPaymentMethod
   comment?: string
   attachmentName?: string
   attachmentDataUrl?: string
   managerId?: string
+  accountType?: string
+  accountId?: string
+  accountName?: string
 }
 
 export interface ManagerBudgetAllocation {
@@ -39,15 +41,18 @@ export interface CreateManagerExpenseInput {
   categoryLabel: string
   amount: number
   spentAt: string
-  paymentMethod: ManagerPaymentMethod
   comment?: string
   attachmentFile?: File | null
+  /** Compte société ou virtuel à débiter (admin, friendly id). */
+  accountId?: string
 }
 
 export interface ManagerCategoryOption {
   id: string
-  /** Clé i18n pour le libellé */
-  labelKey: TranslationKey
+  /** Clé i18n pour le libellé (catégories intégrées). */
+  labelKey?: TranslationKey
+  /** Libellé saisi par le manager (catégories personnalisées). */
+  customLabel?: string
   /** Nom d’icône lucide */
-  icon: "Package" | "Zap" | "Droplets" | "Wifi" | "Wrench" | "Truck" | "GraduationCap" | "MoreHorizontal"
+  icon: "Package" | "Zap" | "Droplets" | "Wifi" | "Wrench" | "Truck" | "GraduationCap" | "HandCoins" | "MoreHorizontal"
 }

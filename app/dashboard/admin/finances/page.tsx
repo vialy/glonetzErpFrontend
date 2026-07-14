@@ -1,5 +1,7 @@
-import { redirect } from "next/navigation"
+"use client"
 
-export default function AdminFinancesPage() {
-  redirect("/dashboard/admin/finances/comptes-tresorerie")
+import { FinanceOverviewPage } from "@/components/finances/finance-overview-page"
+
+export default function AdminFinancesOverviewPage() {
+  return <FinanceOverviewPage />
 }

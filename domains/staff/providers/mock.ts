@@ -103,7 +103,7 @@ export const mockStaffMembersProvider: StaffMembersProvider = {
       createdAt: new Date().toISOString(),
     }
     writeStaff([member, ...list])
-    return member
+    return { ...member, credentialsEmailSent: true }
   },
 
   async update(id: string, input: UpdateStaffMemberInput) {
@@ -136,9 +136,10 @@ export const mockStaffMembersProvider: StaffMembersProvider = {
   async regeneratePassword(id: string) {
     const list = readStaff()
     const idx = list.findIndex((item) => item.id === id)
-    if (idx === -1) return
+    if (idx === -1) return { credentialsEmailSent: true }
     const nextList = [...list]
     nextList[idx] = { ...nextList[idx], mustChangePassword: true }
     writeStaff(nextList)
+    return { credentialsEmailSent: true }
   },
 }

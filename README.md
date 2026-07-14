@@ -4,6 +4,16 @@ Application Next.js pour le personnel : administration, finances, apprenants, r√
 
 ## Lancer en local
 
+**1. Backend** (dans `glonetzErpBackend-feat-ansel`) :
+
+```bash
+cp .env.example .env   # MONGO_URI + secrets
+npm install
+npm run dev            # http://localhost:4000
+```
+
+**2. Frontend admin** :
+
 ```bash
 npm install
 npm run dev
@@ -14,9 +24,11 @@ Ouvrir [http://localhost:3000](http://localhost:3000)
 Variables d'environnement (`.env.local`) :
 
 ```env
-NEXT_PUBLIC_API_BASE_URL=https://glonetzerpbackend-1.onrender.com
+NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
 NEXT_PUBLIC_DATA_PROVIDER=api
 ```
+
+Compte admin par defaut du backend local (voir `.env` backend) : `admin@glonez.com` / `ChangeMe123!`
 
 `NEXT_PUBLIC_DATA_PROVIDER=mock` pour le mode d√©mo sans backend.
 

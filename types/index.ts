@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "manager" | "student" | "accountant"
+export type UserRole = "admin" | "manager" | "student" | "accountant" | "collaborateur"
 
 export interface LoginResponse {
   token: string

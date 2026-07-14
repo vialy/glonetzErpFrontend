@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { ArrowLeft, CalendarRange, Loader2, Save } from "lucide-react"
+import { FormSectionSkeleton } from "@/components/loading/data-skeletons"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { ActionFeedbackOverlay } from "@/components/admin/action-feedback-overlay"
 import { Button } from "@/components/ui/button"
@@ -16,14 +17,26 @@ import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useLocale } from "@/hooks/use-locale"
 import { getApiErrorMessage } from "@/lib/api-error"
 import { deriveClassSession } from "@/lib/class-session"
+import {
+  CLASS_LEVELS,
+  CLASS_TIME_SLOTS,
+  classTimeSlotLabel,
+  type ClassLevel,
+  type ClassTimeSlot,
+} from "@/lib/class-metadata"
 import { isApiDataProvider } from "@/lib/data-provider"
 import { getClassById } from "@/services/admin-mock.service"
+
+const selectClassName =
+  "flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 function applyClassToForm(
   item: StaffClass,
   setters: {
     setName: (v: string) => void
     setDescription: (v: string) => void
+    setLevel: (v: ClassLevel) => void
+    setTimeSlot: (v: ClassTimeSlot) => void
     setPeriodStart: (v: string) => void
     setPeriodEnd: (v: string) => void
     setTuition: (v: string) => void
@@ -31,6 +44,8 @@ function applyClassToForm(
 ) {
   setters.setName(item.name)
   setters.setDescription(item.description)
+  setters.setLevel(item.level)
+  setters.setTimeSlot(item.timeSlot)
   setters.setPeriodStart(item.periodStart)
   setters.setPeriodEnd(item.periodEnd)
   setters.setTuition(String(item.tuitionAmount))
@@ -51,6 +66,8 @@ export default function EditClassPage() {
 
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [level, setLevel] = useState<ClassLevel>("A1")
+  const [timeSlot, setTimeSlot] = useState<ClassTimeSlot>("MO")
   const [periodStart, setPeriodStart] = useState("")
   const [periodEnd, setPeriodEnd] = useState("")
   const [tuition, setTuition] = useState("")
@@ -78,6 +95,8 @@ export default function EditClassPage() {
           applyClassToForm(fromList, {
             setName,
             setDescription,
+            setLevel,
+            setTimeSlot,
             setPeriodStart,
             setPeriodEnd,
             setTuition,
@@ -100,6 +119,8 @@ export default function EditClassPage() {
             applyClassToForm(item, {
               setName,
               setDescription,
+              setLevel,
+              setTimeSlot,
               setPeriodStart,
               setPeriodEnd,
               setTuition,
@@ -123,6 +144,8 @@ export default function EditClassPage() {
           applyClassToForm(mock, {
             setName,
             setDescription,
+            setLevel,
+            setTimeSlot,
             setPeriodStart,
             setPeriodEnd,
             setTuition,
@@ -143,15 +166,19 @@ export default function EditClassPage() {
     return (
       name.trim() !== cls.name.trim() ||
       description.trim() !== (cls.description ?? "").trim() ||
+      level !== cls.level ||
+      timeSlot !== cls.timeSlot ||
       periodStart !== cls.periodStart ||
       periodEnd !== cls.periodEnd ||
       Number(tuition) !== cls.tuitionAmount
     )
-  }, [cls, name, description, periodStart, periodEnd, tuition])
+  }, [cls, name, description, level, timeSlot, periodStart, periodEnd, tuition])
 
   const errors = useMemo(() => {
     const list: string[] = []
     if (!name.trim()) list.push(t("adm_class_edit_err_name"))
+    if (!level) list.push(t("adm_class_new_err_level"))
+    if (!timeSlot) list.push(t("adm_class_new_err_time_slot"))
     if (!periodStart) list.push(t("adm_class_new_err_start"))
     if (!periodEnd) list.push(t("adm_class_new_err_end"))
     if (periodStart && periodEnd && periodStart > periodEnd) list.push(t("adm_class_new_err_order"))
@@ -168,7 +195,7 @@ export default function EditClassPage() {
       if (exists) list.push(t("adm_class_edit_err_dup"))
     }
     return list
-  }, [name, description, periodStart, periodEnd, tuition, cls, classes, derivedSession, t])
+  }, [name, description, level, timeSlot, periodStart, periodEnd, tuition, cls, classes, derivedSession, t])
 
   async function handleSave() {
     setTouched(true)
@@ -181,6 +208,8 @@ export default function EditClassPage() {
         const updated = await classesService.update(cls.id, {
           name: name.trim(),
           description: description.trim(),
+          level,
+          timeSlot,
           periodStart,
           periodEnd,
           tuitionAmount: Number(tuition),
@@ -208,9 +237,8 @@ export default function EditClassPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 px-4 py-8 text-sm text-muted-foreground md:px-6 lg:px-8">
-        <Loader2 className="size-4 animate-spin" />
-        {t("adm_set_loading")}
+      <div className="px-4 py-6 md:px-6 lg:px-8">
+        <FormSectionSkeleton />
       </div>
     )
   }
@@ -260,6 +288,37 @@ export default function EditClassPage() {
               placeholder={t("adm_class_new_description_ph")}
             />
             <p className="text-xs text-muted-foreground">{description.length}/1000</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-level">{t("adm_class_new_level")}</Label>
+            <select
+              id="edit-level"
+              className={selectClassName}
+              value={level}
+              onChange={(e) => setLevel(e.target.value as ClassLevel)}
+            >
+              {CLASS_LEVELS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-slot">{t("adm_class_new_time_slot")}</Label>
+            <select
+              id="edit-slot"
+              className={selectClassName}
+              value={timeSlot}
+              onChange={(e) => setTimeSlot(e.target.value as ClassTimeSlot)}
+            >
+              {CLASS_TIME_SLOTS.map((item) => (
+                <option key={item} value={item}>
+                  {item} — {classTimeSlotLabel(item, locale === "en" ? "en" : "fr")}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 md:col-span-2">

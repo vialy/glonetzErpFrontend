@@ -1,6 +1,7 @@
 import type { LoginResponse, UserRole } from "@/types"
 
 export type StaffApiProfile = {
+  staffId?: string
   id?: string
   friendlyId?: string
   email?: string
@@ -17,6 +18,7 @@ const STAFF_ROLE_CODES: Record<number, UserRole> = {
   400: "accountant",
   500: "accountant",
   600: "manager",
+  200: "collaborateur",
 }
 
 export function mapStaffRoleFromApi(apiRole?: string | number): UserRole {
@@ -30,6 +32,7 @@ export function mapStaffRoleFromApi(apiRole?: string | number): UserRole {
   if (normalized === "admin" || normalized === "administrator") return "admin"
   if (normalized === "manager") return "manager"
   if (normalized === "accountant" || normalized === "comptable") return "accountant"
+  if (normalized === "collaborateur" || normalized === "collaborator") return "collaborateur"
   if (!normalized && apiRole === undefined) throw new Error("INVALID_CREDENTIALS")
   throw new Error("INVALID_CREDENTIALS")
 }
@@ -87,7 +90,7 @@ export function toStaffSession(
     mustChangePin: requiresPasswordChange,
     email: staff.email ?? fallbackEmail,
     phone: staff.phone,
-    staffUserId: staff.id ?? staff.friendlyId,
+    staffUserId: staff.staffId ?? staff.id ?? staff.friendlyId,
     fullName: staff.fullName ?? staff.name,
   }
 }
@@ -111,7 +114,7 @@ export function staffProfileToSession(
     mustChangePin: requiresPasswordChange ?? staff.requiresPasswordChange ?? current.mustChangePin,
     email: staff.email ?? current.email,
     phone: staff.phone ?? current.phone,
-    staffUserId: staff.id ?? staff.friendlyId ?? current.staffUserId,
+    staffUserId: staff.staffId ?? staff.id ?? staff.friendlyId ?? current.staffUserId,
     fullName: staff.fullName ?? staff.name ?? current.fullName,
   }
 }

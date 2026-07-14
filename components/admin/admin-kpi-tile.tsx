@@ -84,7 +84,7 @@ function Sparkline({ data, stroke }: { data: number[]; stroke: string }) {
 
 let idCounter = 0
 function useLocalId() {
-  const ref = useRef<string>()
+  const ref = useRef<string | null>(null)
   if (!ref.current) {
     idCounter += 1
     ref.current = `spark-grad-${idCounter}`

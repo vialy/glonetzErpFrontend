@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { Loader2, UserPlus } from "lucide-react"
+import { TableRowsSkeleton } from "@/components/loading/data-skeletons"
 import { toast } from "@/components/ui/use-toast"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
@@ -42,8 +43,8 @@ function roleLabel(role: StaffRole, t: Translate) {
       return t("adm_usr_role_manager")
     case "accountant":
       return t("adm_usr_role_accountant")
-    case "support":
-      return t("adm_usr_role_support")
+    case "collaborateur":
+      return t("adm_usr_role_collaborateur")
     default:
       return role
   }
@@ -106,12 +107,16 @@ export default function AdminUsersPage() {
     setSaving(true)
     try {
       const created = await staffMembersService.create({ name: fullName, email, role })
+      const emailDesc = created.credentialsEmailSent
+        ? t("adm_usr_toast_created_email")
+        : t("adm_usr_toast_created_email_failed")
       toast({
         title: t("adm_usr_toast_created"),
-        description: t("adm_usr_toast_created_email")
+        description: emailDesc
           .replace("{name}", created.fullName)
           .replace("{role}", roleLabel(created.role, t))
           .replace("{email}", created.email),
+        variant: created.credentialsEmailSent ? "default" : "destructive",
       })
       resetCreateForm()
       setShowCreate(false)
@@ -159,12 +164,15 @@ export default function AdminUsersPage() {
     if (!resetTarget) return
     setResetting(true)
     try {
-      await staffMembersService.regeneratePassword(resetTarget.id)
+      const result = await staffMembersService.regeneratePassword(resetTarget.id)
       toast({
         title: t("adm_usr_toast_pin_ok"),
-        description: t("adm_usr_regenerate_pwd_ok")
+        description: (result.credentialsEmailSent
+          ? t("adm_usr_regenerate_pwd_ok")
+          : t("adm_usr_regenerate_pwd_email_failed"))
           .replace("{name}", resetTarget.fullName)
           .replace("{email}", resetTarget.email),
+        variant: result.credentialsEmailSent ? "default" : "destructive",
       })
     } catch (e) {
       toast({
@@ -285,7 +293,16 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {members.map((u) => (
+              {loading ? (
+                <TableRowsSkeleton rows={6} cols={5} />
+              ) : members.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8">
+                    <AdminEmptyState title={t("adm_usr_empty_title")} description={t("adm_usr_empty_desc")} />
+                  </td>
+                </tr>
+              ) : (
+                members.map((u) => (
                 <tr key={u.id} className="border-t">
                   <td className="px-4 py-3 font-medium">
                     <Link
@@ -342,18 +359,11 @@ export default function AdminUsersPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {t("adm_usr_loading")}
-          </div>
-        ) : members.length === 0 && !error ? (
-          <AdminEmptyState title={t("adm_usr_empty_title")} description={t("adm_usr_empty_desc")} />
-        ) : null}
       </div>
 
       <AlertDialog open={Boolean(resetTarget)} onOpenChange={(open) => !open && setResetTarget(null)}>

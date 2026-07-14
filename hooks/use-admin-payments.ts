@@ -1,57 +1,74 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { getAdminPayments, type AdminPaymentItem } from "@/services/admin-mock.service"
 import { fetchStaffPayments } from "@/services/staff-payments.service"
+import { useAuth } from "@/hooks/use-auth"
+import { getApiErrorMessage } from "@/lib/api-error"
 import { isApiDataProvider } from "@/lib/data-provider"
-import { getCached, hasCached, setCached } from "@/lib/client-cache"
+import { clearCached, getCached, hasCached, setCached } from "@/lib/client-cache"
 
 const CACHE_KEY = "admin-payments"
 
-export function useAdminPaymentsQuery(): { payments: AdminPaymentItem[]; loading: boolean } {
+type AdminPaymentsQuery = {
+  payments: AdminPaymentItem[]
+  loading: boolean
+  error: string | null
+  refresh: () => Promise<void>
+}
+
+export function useAdminPaymentsQuery(): AdminPaymentsQuery {
+  const { status, isAuthenticated } = useAuth()
   const [list, setList] = useState<AdminPaymentItem[]>(() => {
     if (typeof window === "undefined") return []
     if (!isApiDataProvider()) return getAdminPayments()
     return getCached<AdminPaymentItem[]>(CACHE_KEY) ?? []
   })
   // En mode API : skeleton seulement si rien n'est encore en cache.
-  const [loading, setLoading] = useState(isApiDataProvider() && !hasCached(CACHE_KEY))
+  const [loading, setLoading] = useState(() => isApiDataProvider() && !hasCached(CACHE_KEY))
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    // Mode API : on charge les paiements reels depuis le backend (GET /staff/payments).
+  const refresh = useCallback(async () => {
     if (isApiDataProvider()) {
-      let cancelled = false
-      const load = () => {
-        fetchStaffPayments()
-          .then((items) => {
-            if (cancelled) return
-            setList(items)
-            setCached(CACHE_KEY, items)
-          })
-          .catch(() => {
-            if (!cancelled && !hasCached(CACHE_KEY)) setList([])
-          })
-          .finally(() => {
-            if (!cancelled) setLoading(false)
-          })
+      if (status === "loading") return
+      if (!isAuthenticated) {
+        setList([])
+        clearCached(CACHE_KEY)
+        setError(null)
+        setLoading(false)
+        return
       }
-      load()
-      window.addEventListener("admin-payments-updated", load)
-      return () => {
-        cancelled = true
-        window.removeEventListener("admin-payments-updated", load)
+
+      // Revalidation silencieuse si on a deja des donnees en cache.
+      if (!hasCached(CACHE_KEY)) setLoading(true)
+      setError(null)
+      try {
+        const items = await fetchStaffPayments()
+        setList(items)
+        setCached(CACHE_KEY, items)
+      } catch (err) {
+        if (!hasCached(CACHE_KEY)) setList([])
+        setError(getApiErrorMessage(err, "Impossible de charger les paiements."))
+      } finally {
+        setLoading(false)
       }
+      return
     }
 
     // Mode mock : donnees locales (synchrones).
     setList(getAdminPayments())
+    setError(null)
     setLoading(false)
-    const refresh = () => setList(getAdminPayments())
-    window.addEventListener("admin-payments-updated", refresh)
-    return () => window.removeEventListener("admin-payments-updated", refresh)
-  }, [])
+  }, [status, isAuthenticated])
 
-  return { payments: list, loading }
+  useEffect(() => {
+    void refresh()
+    const onUpdate = () => void refresh()
+    window.addEventListener("admin-payments-updated", onUpdate)
+    return () => window.removeEventListener("admin-payments-updated", onUpdate)
+  }, [refresh])
+
+  return { payments: list, loading, error, refresh }
 }
 
 export function useAdminPayments(): AdminPaymentItem[] {

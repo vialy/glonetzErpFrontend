@@ -134,6 +134,50 @@ export async function fetchStaffPayments(query: StaffPaymentsQuery = {}): Promis
   return items
 }
 
+/** Option de paiement réclamable (v4) : statut non validé (pending/failed). */
+export type ClaimablePaymentOption = {
+  id: string
+  amount: number
+  status: "pending" | "failed"
+  createdAt: string
+}
+
+/**
+ * Paiements réclamables d'un apprenant pour résoudre une réclamation (contrat v4) :
+ * uniquement les paiements `pending` ou `failed` (les `successful` sont déjà validés,
+ * `cancelled`/`refunded` ne sont pas réclamables). Contrairement à fetchStaffPayments,
+ * cette fonction conserve les paiements `failed`.
+ */
+export async function fetchClaimablePaymentsForUser(userId: string): Promise<ClaimablePaymentOption[]> {
+  const items: ClaimablePaymentOption[] = []
+  let pageNum = 1
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const data = await apiRequest<ApiPaymentPage>("/staff/payments", {
+      method: "GET",
+      query: { pageNum, pageSize: PAGE_SIZE, userId },
+    })
+
+    const docs = Array.isArray(data) ? data : (data?.docs ?? [])
+    for (const doc of docs) {
+      const status = (doc.status ?? "").toLowerCase()
+      if (status !== "pending" && status !== "failed") continue
+      items.push({
+        id: doc.paymentId ?? "",
+        amount: doc.amount ?? 0,
+        status: status as "pending" | "failed",
+        createdAt: doc.settledAt ?? doc.createdAt ?? new Date().toISOString(),
+      })
+    }
+
+    const totalPages = Array.isArray(data) ? 1 : (data?.totalPages ?? 1)
+    if (docs.length < PAGE_SIZE || pageNum >= totalPages) break
+    pageNum += 1
+  }
+
+  return items
+}
+
 /** Detail d'un paiement via GET /staff/payments/:id. */
 export async function getStaffPaymentById(paymentId: string): Promise<AdminPaymentItem | null> {
   const data = await apiRequest<{ payment?: ApiStaffPayment } | ApiStaffPayment>(

@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   User,
   Wallet,
+  School,
 } from "lucide-react"
 import type { UserRole } from "@/types"
 import { cn } from "@/lib/utils"
@@ -29,6 +30,7 @@ function itemsByRole(role: UserRole | null): MobileItem[] {
       { labelKey: "mob_mgr_home", href: "/dashboard", icon: <Home className="size-4" /> },
       { labelKey: "mob_mgr_learners", href: "/dashboard/manager/apprenants", icon: <GraduationCap className="size-4" /> },
       { labelKey: "mob_mgr_pay", href: "/dashboard/manager/paiements", icon: <CreditCard className="size-4" /> },
+      { labelKey: "mob_mgr_claims", href: "/dashboard/reclamations-validation", icon: <AlertCircle className="size-4" /> },
       { labelKey: "mob_mgr_budget", href: "/dashboard/manager/budget", icon: <Wallet className="size-4" /> },
       { labelKey: "mob_mgr_profile", href: "/dashboard/manager/profil", icon: <User className="size-4" /> },
     ]
@@ -41,6 +43,14 @@ function itemsByRole(role: UserRole | null): MobileItem[] {
       { labelKey: "mob_acc_claims", href: "/dashboard/comptable/reclamations", icon: <AlertCircle className="size-4" /> },
       { labelKey: "mob_acc_rep", href: "/dashboard/comptable/rapports", icon: <FileBarChart className="size-4" /> },
       { labelKey: "mob_acc_profile", href: "/dashboard/comptable/profil", icon: <User className="size-4" /> },
+    ]
+  }
+
+  if (role === "collaborateur") {
+    return [
+      { labelKey: "nav_learners", href: "/dashboard/collaborateur/apprenants", icon: <GraduationCap className="size-4" /> },
+      { labelKey: "nav_classes", href: "/dashboard/collaborateur/classes", icon: <School className="size-4" /> },
+      { labelKey: "nav_profile", href: "/dashboard/collaborateur/profil", icon: <User className="size-4" /> },
     ]
   }
 
@@ -80,7 +90,7 @@ export function MobileBottomNav({ role }: { role: UserRole | null }) {
           const active = item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href)
           return (
             <button
-              key={item.href}
+              key={item.labelKey}
               type="button"
               onClick={() => {
                 if (pathname === item.href) return

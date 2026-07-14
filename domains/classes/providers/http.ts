@@ -6,6 +6,7 @@ import {
   parseStaffClassDetails,
   parseStaffClassList,
   toCreateClassBody,
+  toUpdateClassBody,
 } from "@/domains/classes/classes-api-mapper"
 import type {
   ClassesProvider,
@@ -19,16 +20,6 @@ import type {
 // few round-trips as possible (each request is ~300-400ms on Render).
 const FETCH_ALL_PAGE_SIZE = 100
 const MAX_PAGES = 50
-
-function toUpdateClassBody(input: UpdateStaffClassInput) {
-  const body: Record<string, unknown> = {}
-  if (input.name !== undefined) body.title = input.name.trim()
-  if (input.description !== undefined) body.description = input.description.trim()
-  if (input.periodStart !== undefined) body.startDate = input.periodStart
-  if (input.periodEnd !== undefined) body.endDate = input.periodEnd
-  if (input.tuitionAmount !== undefined) body.fee = Math.round(input.tuitionAmount)
-  return body
-}
 
 async function fetchAllClasses(query: ListStaffClassesQuery = {}) {
   const pageSize = query.pageSize ?? FETCH_ALL_PAGE_SIZE

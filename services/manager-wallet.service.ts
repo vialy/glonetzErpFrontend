@@ -6,6 +6,8 @@ import type {
   ManagerBudgetSummary,
   ManagerExpenseRecord,
 } from "@/domains/manager-wallet/types"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { createStaffExpense } from "@/services/staff-expenses.service"
 
 const STORAGE_KEY = "glonetz_manager_wallets_v3"
 const LEGACY_KEY = "glonetz_manager_wallet_v2"
@@ -183,6 +185,9 @@ export const ManagerWalletService = {
     managerId: string,
     input: CreateManagerExpenseInput,
   ): Promise<ManagerExpenseRecord> {
+    if (isApiDataProvider()) {
+      return createStaffExpense(input)
+    }
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new Error("INVALID_AMOUNT")
     }
@@ -216,7 +221,6 @@ export const ManagerWalletService = {
       categoryLabel: input.categoryLabel.trim(),
       amount: input.amount,
       currencyCode: "XOF",
-      paymentMethod: input.paymentMethod,
       comment: input.comment?.trim() || undefined,
       attachmentName,
       attachmentDataUrl,

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { CreditCard, KeyRound, Loader2, Mail, Plus, Settings2, Trash2, User } from "lucide-react"
+import { FormSectionSkeleton } from "@/components/loading/data-skeletons"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,6 +34,17 @@ function roleLabel(role: string, t: (k: import("@/services/i18n").TranslationKey
   if (role === "accountant") return t("adm_usr_role_accountant")
   if (role === "student") return t("adm_usr_role_student")
   return role
+}
+
+function gatewayLabel(
+  gateway: PaymentGatewayId,
+  t: (k: import("@/services/i18n").TranslationKey) => string,
+) {
+  if (gateway === "neero") return t("adm_set_gateway_neero")
+  if (gateway === "none") return t("adm_set_gateway_none")
+  if (gateway === "monero") return t("adm_set_gateway_monero")
+  if (gateway === "tranzak") return t("adm_set_gateway_tranzak")
+  return gateway
 }
 
 export default function AdminSettingsPage() {
@@ -244,10 +256,9 @@ export default function AdminSettingsPage() {
           </div>
 
           {settingsLoading ? (
-            <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              {t("adm_set_loading")}
-            </p>
+            <div className="mt-4">
+              <FormSectionSkeleton />
+            </div>
           ) : (
             <div className="mt-4 space-y-4">
               <div className="space-y-1.5">
@@ -265,7 +276,7 @@ export default function AdminSettingsPage() {
                   <SelectContent>
                     {gateways.map((g) => (
                       <SelectItem key={g} value={g}>
-                        {g}
+                        {gatewayLabel(g, t)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -320,13 +331,6 @@ export default function AdminSettingsPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">{t("adm_set_emails_hint")}</p>
               </div>
-
-              {settings ? (
-                <p className="text-[10px] text-muted-foreground">
-                  ID {settings.id} · {t("adm_set_updated")}{" "}
-                  {new Date(settings.updatedAt).toLocaleString("fr-FR")}
-                </p>
-              ) : null}
 
               <Button
                 type="button"

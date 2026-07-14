@@ -137,6 +137,12 @@ function resolvePaymentSummary(record: Record<string, unknown>): Record<string, 
   return null
 }
 
+function formatDateOfBirth(value: unknown): string {
+  if (!value) return ""
+  const raw = value instanceof Date ? value.toISOString() : String(value)
+  return raw.length >= 10 ? raw.slice(0, 10) : raw
+}
+
 export function mapApiUserToStaffLearner(data: unknown): StaffLearner {
   const record = pickUserRecord(data)
   const classRecord = resolveNestedClass(record)
@@ -147,9 +153,9 @@ export function mapApiUserToStaffLearner(data: unknown): StaffLearner {
   const classFee = Number(classRecord?.fee ?? classRecord?.tuitionAmount ?? classRecord?.amount ?? 0)
 
   const due = Number(
-    paymentSummary?.totalDue ??
+    paymentSummary?.expected ??
+      paymentSummary?.totalDue ??
       paymentSummary?.due ??
-      paymentSummary?.expected ??
       paymentSummary?.amountDue ??
       record.due ??
       record.totalDue ??
@@ -186,7 +192,8 @@ export function mapApiUserToStaffLearner(data: unknown): StaffLearner {
     classId,
     className: className || undefined,
     createdAt: String(record.createdAt ?? record.created ?? record.registeredAt ?? new Date().toISOString()),
-    dateOfBirth: String(record.dateOfBirth ?? record.dob ?? record.birthDate ?? ""),
+    dateOfBirth: formatDateOfBirth(record.dateOfBirth ?? record.dob ?? record.birthDate),
+    placeOfBirth: String(record.placeOfBirth ?? record.birthPlace ?? ""),
     pinInitialized: Boolean(
       record.pinInitialized ?? record.passwordInitialized ?? record.credentialsSent ?? true,
     ),
@@ -235,7 +242,8 @@ export function learnerFromCreateFallback(
     email: input.email?.trim() || undefined,
     classId: input.classId,
     createdAt: new Date().toISOString(),
-    dateOfBirth: "",
+    dateOfBirth: input.dateOfBirth?.slice(0, 10) ?? "",
+    placeOfBirth: input.placeOfBirth?.trim() ?? "",
     pinInitialized: true,
     mustChangePin: true,
     status: "active",
@@ -258,15 +266,21 @@ export function toCreateLearnerBody(input: CreateStaffLearnerInput) {
   }
   const email = input.email?.trim()
   if (email) body.email = email
+  if (input.dateOfBirth?.trim()) body.dateOfBirth = input.dateOfBirth.trim().slice(0, 10)
+  if (input.placeOfBirth?.trim()) body.placeOfBirth = input.placeOfBirth.trim()
   return body
 }
 
 export function toUpdateLearnerBody(input: {
   name?: string
   email?: string
+  dateOfBirth?: string
+  placeOfBirth?: string
 }) {
   const body: Record<string, unknown> = {}
   if (input.name !== undefined) body.name = input.name.trim()
   if (input.email !== undefined) body.email = input.email.trim() || undefined
+  if (input.dateOfBirth !== undefined) body.dateOfBirth = input.dateOfBirth.trim().slice(0, 10) || null
+  if (input.placeOfBirth !== undefined) body.placeOfBirth = input.placeOfBirth.trim() || null
   return body
 }

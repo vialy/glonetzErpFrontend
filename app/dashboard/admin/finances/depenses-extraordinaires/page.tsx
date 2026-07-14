@@ -1,11 +1,21 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { CalendarRange, Download, Search, TrendingDown, Wallet } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Download, Search, Wallet } from "lucide-react"
+import { ExtraordinaryExpenseCreateForm } from "@/components/finances/extraordinary-expense-create-form"
+import { FinanceFilterCard, FinancePremiumPanel } from "@/components/finances/finance-premium-ui"
 import { adminExpenses, formatFcfa } from "@/services/admin-mock.service"
 import { toast } from "@/components/ui/use-toast"
 import { useFinanceContext } from "../finance-context"
 import { useLocale } from "@/hooks/use-locale"
+import { useAuth } from "@/hooks/use-auth"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { useAdminExtraordinaryWallet } from "@/hooks/use-admin-extraordinary-wallet"
+import {
+  EXPENSES_UPDATED_EVENT,
+  fetchExtraordinaryExpenses,
+} from "@/services/staff-expenses.service"
+import type { CreateManagerExpenseInput, ManagerBudgetSummary } from "@/domains/manager-wallet/types"
 
 type ExtraRow = {
   id: string
@@ -13,15 +23,24 @@ type ExtraRow = {
   label: string
   amount: number
   walletId: string
-  source: "session" | "seed"
+  walletName: string
+  source: "session" | "seed" | "api"
 }
+
+const COMPANY_WALLET_ID = "company-main"
 
 export default function DepensesExtraordinairesPage() {
   const { t } = useLocale()
-  const { operations, wallets, addExtraExpense } = useFinanceContext()
+  const { session } = useAuth()
+  const apiMode = isApiDataProvider()
+  const categoriesOwnerId = session?.staffUserId ?? session?.email ?? "admin"
+  const { operations, wallets, addExtraExpense, extraordinaryExpenses } = useFinanceContext()
+  const extraordinaryWallet = useAdminExtraordinaryWallet()
+
   const [extraWalletId, setExtraWalletId] = useState(wallets[0]?.id ?? "")
-  const [extraLabel, setExtraLabel] = useState("")
-  const [extraAmount, setExtraAmount] = useState("")
+  const [apiRows, setApiRows] = useState<ExtraRow[]>([])
+  const [loadingApi, setLoadingApi] = useState(apiMode)
+
   const extraWallet = wallets.find((wallet) => wallet.id === extraWalletId)
   const [walletFilter, setWalletFilter] = useState("all")
   const [dateFrom, setDateFrom] = useState("")
@@ -30,17 +49,81 @@ export default function DepensesExtraordinairesPage() {
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
 
+  const reloadApiData = useCallback(async () => {
+    if (!apiMode) return
+    setLoadingApi(true)
+    try {
+      const expenses = await fetchExtraordinaryExpenses({
+        from: dateFrom || undefined,
+        to: dateTo || undefined,
+        accountId: walletFilter !== "all" ? walletFilter : undefined,
+      })
+      setApiRows(
+        expenses.map((e) => ({
+          id: e.id,
+          createdAt: e.spentAt.slice(0, 10),
+          label: e.categoryLabel || e.comment || t("fin_alloc_extra_title"),
+          amount: e.amount,
+          walletId: e.accountId ?? COMPANY_WALLET_ID,
+          walletName: e.accountName ?? t("fin_wallets_type_company"),
+          source: "api" as const,
+        })),
+      )
+    } catch {
+      setApiRows([])
+    } finally {
+      setLoadingApi(false)
+    }
+  }, [apiMode, dateFrom, dateTo, walletFilter, t])
+
+  useEffect(() => {
+    if (!apiMode) return
+    void reloadApiData()
+  }, [apiMode, reloadApiData, extraordinaryExpenses, extraordinaryWallet.allExpenses])
+
+  useEffect(() => {
+    if (!apiMode) return
+    const refresh = () => void reloadApiData()
+    window.addEventListener(EXPENSES_UPDATED_EVENT, refresh)
+    return () => window.removeEventListener(EXPENSES_UPDATED_EVENT, refresh)
+  }, [apiMode, reloadApiData])
+
+  const mockExtraOps = useMemo(
+    () => operations.filter((op) => op.type === "extra_expense"),
+    [operations],
+  )
+
+  const mockSummary = useMemo((): ManagerBudgetSummary | null => {
+    if (apiMode || !extraWallet) return null
+    const spentOnWallet = mockExtraOps
+      .filter((op) => op.walletId === extraWalletId)
+      .reduce((sum, op) => sum + op.amount, 0)
+    const remaining = extraWallet.currentBalance
+    return {
+      envelopeCeiling: remaining + spentOnWallet,
+      totalSpent: spentOnWallet,
+      remaining,
+      currencyCode: "XAF",
+    }
+  }, [apiMode, extraWallet, extraWalletId, mockExtraOps])
+
+  const formSummary = apiMode ? extraordinaryWallet.summary : mockSummary
+  const formLoading = apiMode ? extraordinaryWallet.loading : false
+  const formAccountName = apiMode
+    ? extraordinaryWallet.selectedAccount?.name
+    : extraWallet?.name
+
   const allRows = useMemo<ExtraRow[]>(() => {
-    const fromOps: ExtraRow[] = operations
-      .filter((op) => op.type === "extra_expense")
-      .map((op) => ({
-        id: op.id,
-        createdAt: op.createdAt.slice(0, 10),
-        label: op.label,
-        amount: op.amount,
-        walletId: op.walletId,
-        source: "session",
-      }))
+    if (apiMode) return apiRows
+    const fromOps: ExtraRow[] = mockExtraOps.map((op) => ({
+      id: op.id,
+      createdAt: op.createdAt.slice(0, 10),
+      label: op.label,
+      amount: op.amount,
+      walletId: op.walletId,
+      walletName: wallets.find((w) => w.id === op.walletId)?.name ?? op.walletId,
+      source: "session",
+    }))
     const fromSeed: ExtraRow[] = adminExpenses
       .filter((e) => e.type === "extra")
       .map((e) => ({
@@ -49,10 +132,22 @@ export default function DepensesExtraordinairesPage() {
         label: e.label,
         amount: e.amount,
         walletId: "w-tuition",
+        walletName: wallets.find((w) => w.id === "w-tuition")?.name ?? "w-tuition",
         source: "seed",
       }))
     return [...fromSeed, ...fromOps].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
-  }, [operations])
+  }, [apiMode, apiRows, mockExtraOps, wallets])
+
+  const walletOptions = useMemo(() => {
+    if (apiMode) {
+      return extraordinaryWallet.treasuryWallets.map((w) => ({
+        id: w.accountId,
+        name: w.name,
+        balance: w.balance,
+      }))
+    }
+    return wallets.map((w) => ({ id: w.id, name: w.name, balance: w.currentBalance }))
+  }, [apiMode, extraordinaryWallet.treasuryWallets, wallets])
 
   const filtered = useMemo(() => {
     return allRows.filter((row) => {
@@ -66,8 +161,6 @@ export default function DepensesExtraordinairesPage() {
       return true
     })
   }, [allRows, walletFilter, dateFrom, dateTo, query])
-
-  const kpiTotal = useMemo(() => filtered.reduce((s, r) => s + r.amount, 0), [filtered])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const paged = useMemo(() => {
@@ -83,7 +176,14 @@ export default function DepensesExtraordinairesPage() {
     if (page > pageCount) setPage(pageCount)
   }, [page, pageCount])
 
-  function walletName(id: string) {
+  function walletName(id: string, row?: ExtraRow) {
+    if (row?.walletName) return row.walletName
+    if (apiMode) {
+      return (
+        extraordinaryWallet.treasuryWallets.find((w) => w.accountId === id)?.name ??
+        t("fin_wallets_type_company")
+      )
+    }
     return wallets.find((w) => w.id === id)?.name ?? id
   }
 
@@ -94,9 +194,9 @@ export default function DepensesExtraordinairesPage() {
     }
     const header = "date,motif,montant,portefeuille,operation_id,source"
     const rows = filtered.map((r) =>
-      [r.createdAt, r.label, String(r.amount), walletName(r.walletId), r.id, r.source]
+      [r.createdAt, r.label, String(r.amount), walletName(r.walletId, r), r.id, r.source]
         .map((v) => `"${String(v).replaceAll('"', '""')}"`)
-        .join(",")
+        .join(","),
     )
     const csv = [header, ...rows].join("\n")
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
@@ -112,117 +212,85 @@ export default function DepensesExtraordinairesPage() {
     })
   }
 
+  async function handleCreateExpense(input: CreateManagerExpenseInput) {
+    if (apiMode) {
+      await extraordinaryWallet.createExpense(input)
+      await reloadApiData()
+      return
+    }
+
+    const label = input.comment?.trim()
+      ? `${input.categoryLabel} — ${input.comment.trim()}`
+      : input.categoryLabel
+    const result = addExtraExpense(extraWalletId, label, input.amount)
+    if (!result.ok) {
+      throw new Error(result.reason ?? "UNKNOWN")
+    }
+  }
+
+  const walletField = apiMode ? (
+    <label className="mb-4 block text-xs font-medium text-muted-foreground">
+      {t("fin_alloc_wallet_src")}
+      <select
+        value={extraordinaryWallet.selectedAccountId}
+        onChange={(e) => extraordinaryWallet.setSelectedAccountId(e.target.value)}
+        disabled={formLoading || extraordinaryWallet.treasuryWallets.length === 0}
+        className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-50"
+      >
+        {extraordinaryWallet.treasuryWallets.map((wallet) => (
+          <option key={wallet.accountId} value={wallet.accountId}>
+            {wallet.name} ({formatFcfa(wallet.balance)})
+          </option>
+        ))}
+      </select>
+    </label>
+  ) : (
+    <label className="mb-4 block text-xs font-medium text-muted-foreground">
+      {t("fin_alloc_wallet_src")}
+      <select
+        value={extraWalletId}
+        onChange={(e) => setExtraWalletId(e.target.value)}
+        className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
+      >
+        {wallets.map((wallet) => (
+          <option key={wallet.id} value={wallet.id}>
+            {wallet.name} ({formatFcfa(wallet.currentBalance)})
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
-        <div className="bg-gradient-to-r from-rose-600 via-orange-600 to-amber-500 px-4 py-4 text-white sm:px-5 sm:py-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="flex items-center gap-2 text-base font-semibold tracking-tight">
-                <TrendingDown className="size-5" />
-                {t("fin_extra_title")}
-              </p>
-              <p className="mt-1 max-w-2xl text-sm text-white/90">{t("fin_extra_sub")}</p>
-            </div>
-            <button
-              type="button"
-              onClick={exportCsv}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-xs font-semibold backdrop-blur-sm transition hover:bg-white/20"
-            >
-              <Download className="size-3.5" />
-              {t("fin_extra_export")}
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 border-t bg-muted/20 p-3 sm:grid-cols-3 sm:p-4">
-          <div className="rounded-xl border border-white/10 bg-background/80 p-3 dark:bg-background/40">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("fin_extra_kpi_lines")}</p>
-            <p className="mt-1 text-xl font-semibold tabular-nums">{filtered.length}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 bg-background/80 p-3 dark:bg-background/40">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("fin_extra_kpi_total")}</p>
-            <p className="mt-1 text-xl font-semibold tabular-nums">{formatFcfa(kpiTotal)}</p>
-          </div>
-          <div className="col-span-2 rounded-xl border border-dashed border-muted-foreground/25 bg-muted/30 p-3 sm:col-span-1">
-            <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              <CalendarRange className="size-3.5" /> {t("fin_extra_period")}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {dateFrom || dateTo
-                ? t("fin_extra_period_range")
-                    .replace("{from}", dateFrom || t("fin_extra_ellipsis"))
-                    .replace("{to}", dateTo || t("fin_extra_ellipsis"))
-                : t("fin_extra_period_none")}
-            </p>
-          </div>
-        </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={exportCsv}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 to-orange-500/5 px-4 py-2.5 text-xs font-bold shadow-sm transition hover:shadow-md"
+        >
+          <Download className="size-3.5 text-amber-700 dark:text-amber-300" />
+          {t("fin_extra_export")}
+        </button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
-        <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-3 text-white">
-          <p className="text-sm font-semibold">{t("fin_alloc_extra_title")}</p>
-          <p className="mt-0.5 text-xs text-white/90">{t("fin_alloc_extra_sub")}</p>
-        </div>
-        <div className="p-3 sm:p-4">
-          <div className="mb-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs">
-            <p className="text-muted-foreground">{t("fin_alloc_available")}</p>
-            <p className="mt-0.5 font-semibold text-foreground">{formatFcfa(extraWallet?.currentBalance ?? 0)}</p>
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="block text-xs font-medium text-muted-foreground sm:col-span-2">
-              {t("fin_alloc_wallet_src")}
-              <select
-                value={extraWalletId}
-                onChange={(e) => setExtraWalletId(e.target.value)}
-                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
-              >
-                {wallets.map((wallet) => (
-                  <option key={wallet.id} value={wallet.id}>
-                    {wallet.name} ({formatFcfa(wallet.currentBalance)})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-xs font-medium text-muted-foreground">
-              {t("fin_alloc_motif")}
-              <input
-                value={extraLabel}
-                onChange={(e) => setExtraLabel(e.target.value)}
-                placeholder={t("fin_alloc_extra_motif_ph")}
-                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="block text-xs font-medium text-muted-foreground">
-              {t("fin_alloc_amount")}
-              <input
-                value={extraAmount}
-                onChange={(e) => setExtraAmount(e.target.value)}
-                type="number"
-                placeholder={t("fin_alloc_amount_ph")}
-                className="mt-1 min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
-          <button
-            onClick={() => {
-              const result = addExtraExpense(extraWalletId, extraLabel, Number(extraAmount))
-              if (!result.ok) {
-                toast({ title: t("fin_alloc_extra_toast_refuse"), description: result.reason, variant: "destructive" })
-                return
-              }
-              setExtraLabel("")
-              setExtraAmount("")
-              toast({ title: t("fin_alloc_extra_toast_ok_title"), description: t("fin_alloc_extra_toast_ok_desc") })
-            }}
-            className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground sm:w-auto"
-          >
-            <TrendingDown className="size-4" /> {t("fin_alloc_extra_btn")}
-          </button>
-        </div>
-      </div>
+      <FinancePremiumPanel
+        title={t("fin_alloc_extra_title")}
+        description={t("fin_alloc_extra_sub")}
+        accent="amber"
+      >
+        <ExtraordinaryExpenseCreateForm
+          summary={formSummary}
+          loading={formLoading}
+          accountName={formAccountName}
+          categoriesOwnerId={categoriesOwnerId}
+          onSubmit={handleCreateExpense}
+          walletField={walletField}
+        />
+      </FinancePremiumPanel>
 
-      <div className="rounded-2xl border bg-card p-3 shadow-sm sm:p-4">
-        <p className="text-sm font-semibold">{t("fin_extra_filters")}</p>
+      <FinanceFilterCard accent="amber">
+        <p className="text-sm font-bold">{t("fin_extra_filters")}</p>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">{t("fin_extra_wallet")}</span>
@@ -232,7 +300,7 @@ export default function DepensesExtraordinairesPage() {
               className="min-h-10 w-full rounded-xl border bg-background px-3 py-2 text-sm shadow-sm"
             >
               <option value="all">{t("fin_extra_all_wallets")}</option>
-              {wallets.map((w) => (
+              {walletOptions.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
                 </option>
@@ -290,9 +358,9 @@ export default function DepensesExtraordinairesPage() {
             <option value={50}>{t("fin_extra_per_page").replace("{n}", "50")}</option>
           </select>
         </div>
-      </div>
+      </FinanceFilterCard>
 
-      <div className="hidden overflow-hidden rounded-2xl border bg-card shadow-sm md:block">
+      <div className="hidden overflow-hidden rounded-2xl border border-border/60 bg-card shadow-[0_20px_40px_-28px_rgba(15,23,42,0.35)] md:block">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="sticky top-0 z-[1] border-b bg-muted/50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -305,28 +373,36 @@ export default function DepensesExtraordinairesPage() {
               </tr>
             </thead>
             <tbody>
-              {paged.map((row) => (
-                <tr key={row.id} className="border-b border-border/60 transition-colors hover:bg-muted/30">
-                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{row.createdAt}</td>
-                  <td className="px-4 py-3 font-medium">{row.label}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                      <Wallet className="size-3.5 shrink-0" />
-                      {walletName(row.walletId)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold tabular-nums text-amber-800 dark:text-amber-400">
-                    − {formatFcfa(row.amount)}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {row.id}
-                    {row.source === "seed" ? (
-                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">{t("fin_extra_demo")}</span>
-                    ) : null}
+              {loadingApi && apiMode ? (
+                <tr>
+                  <td className="px-4 py-12 text-center text-muted-foreground" colSpan={5}>
+                    …
                   </td>
                 </tr>
-              ))}
-              {paged.length === 0 ? (
+              ) : (
+                paged.map((row) => (
+                  <tr key={row.id} className="border-b border-border/60 transition-colors hover:bg-muted/30">
+                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{row.createdAt}</td>
+                    <td className="px-4 py-3 font-medium">{row.label}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                        <Wallet className="size-3.5 shrink-0" />
+                        {walletName(row.walletId, row)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-amber-800 dark:text-amber-400">
+                      − {formatFcfa(row.amount)}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      {row.id}
+                      {row.source === "seed" ? (
+                        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">{t("fin_extra_demo")}</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))
+              )}
+              {!loadingApi && paged.length === 0 ? (
                 <tr>
                   <td className="px-4 py-12 text-center text-muted-foreground" colSpan={5}>
                     {t("fin_extra_empty")}
@@ -339,7 +415,11 @@ export default function DepensesExtraordinairesPage() {
       </div>
 
       <div className="space-y-3 md:hidden">
-        {paged.length === 0 ? (
+        {loadingApi && apiMode ? (
+          <div className="rounded-2xl border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+            …
+          </div>
+        ) : paged.length === 0 ? (
           <div className="rounded-2xl border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
             {t("fin_extra_empty")}
           </div>
@@ -355,7 +435,7 @@ export default function DepensesExtraordinairesPage() {
               </div>
               <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Wallet className="size-3.5" />
-                {walletName(row.walletId)}
+                {walletName(row.walletId, row)}
               </p>
               <p className="mt-1 font-mono text-[10px] text-muted-foreground">{row.id}</p>
             </div>
@@ -387,7 +467,9 @@ export default function DepensesExtraordinairesPage() {
         </div>
       ) : null}
 
-      <p className="text-xs text-muted-foreground">{t("fin_extra_footer_tip")}</p>
+      <p className="text-xs text-muted-foreground">
+        {apiMode ? t("fin_extra_footer_tip_api") : t("fin_extra_footer_tip")}
+      </p>
     </div>
   )
 }

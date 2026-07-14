@@ -1,23 +1,27 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ArrowRight, Building2, CalendarDays, GraduationCap, Users, Wallet } from "lucide-react"
 import { LazyAreaChart } from "@/components/charts/lazy-area-chart"
 import { adminExpenses, formatFcfa } from "@/services/admin-mock.service"
 import { enrichClassesWithLearnerStats } from "@/domains/classes/enrich-classes"
-import { classesService, type StaffClassStats } from "@/domains/classes"
+import { classesService, applyClassStatsToRow, type StaffClassStats } from "@/domains/classes"
 import { isApiDataProvider } from "@/lib/data-provider"
 import { getCached, hasCached, setCached } from "@/lib/client-cache"
 import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
 import { useAdminPaymentsQuery } from "@/hooks/use-admin-payments"
 import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
 import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
+import { usePendingClaimsCount } from "@/hooks/use-pending-claims-count"
+import { useAdminDashboardCharges } from "@/hooks/use-admin-dashboard-charges"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminKpiTile } from "@/components/admin/admin-kpi-tile"
+import { DataLoadError } from "@/components/data-load-error"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLocale } from "@/hooks/use-locale"
 import { computePeriodRange, isIsoDateInPeriod } from "@/lib/manager-period-range"
+import { buildDashboardCashflowChart } from "@/lib/dashboard-cashflow-chart"
 import { defaultManagerPeriodFilter } from "@/lib/manager-period-range"
 
 function fcfaNumber(value: number): string {
@@ -37,11 +41,19 @@ type PeriodId =
   | "last_year"
 
 export function TreasuryContent() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [period, setPeriod] = useState<PeriodId>("last_30")
-  const { payments: adminPayments, loading: paymentsLoading } = useAdminPaymentsQuery()
-  const { learners: adminLearners, loading: learnersLoading } = useAdminLearnersQuery()
-  const { classes: adminClasses, loading: classesLoading } = useAdminClassesQuery()
+  const { payments: adminPayments, loading: paymentsLoading, error: paymentsError, refresh: refreshPayments } = useAdminPaymentsQuery()
+  const { learners: adminLearners, loading: learnersLoading, error: learnersError, refresh: refreshLearners } = useAdminLearnersQuery()
+  const { classes: adminClasses, loading: classesLoading, error: classesError, refresh: refreshClasses } = useAdminClassesQuery()
+  const { count: pendingClaims, loading: claimsLoading } = usePendingClaimsCount()
+  const [retrying, setRetrying] = useState(false)
+
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    await Promise.all([refreshPayments(), refreshLearners(), refreshClasses()])
+    setRetrying(false)
+  }, [refreshPayments, refreshLearners, refreshClasses])
   // Encaisse par classe : meme source que la page Classes/Apprenants (paiements reels).
   const { paidByClass } = useStaffPaidAggregates()
 
@@ -97,10 +109,6 @@ export function TreasuryContent() {
     }
   }, [classIdsKey])
 
-  // Chargement global du dashboard (mode API uniquement ; mock = synchrone).
-  const loading =
-    isApiDataProvider() && (paymentsLoading || learnersLoading || classesLoading || statsLoading)
-
   // Classes enrichies : en mode API on prend le rollup serveur (source autoritaire),
   // avec repli sur l'enrichissement local si /details indisponible pour une classe.
   const enrichedClasses = useMemo(() => {
@@ -108,15 +116,9 @@ export function TreasuryContent() {
     if (!isApiDataProvider()) return enriched
     return enriched.map((c) => {
       const stats = statsByClass[c.id]
-      // Encaisse : somme des paiements reels de la classe (source unique partagee).
-      const totalPaid = paidByClass[c.id] ?? 0
-      if (!stats) return { ...c, totalPaid }
-      return {
-        ...c,
-        learnersCount: stats.studentCount || c.learnersCount,
-        totalDue: stats.totalExpected,
-        totalPaid,
-      }
+      const fallbackPaid = paidByClass[c.id] ?? 0
+      if (!stats) return { ...c, totalPaid: fallbackPaid }
+      return applyClassStatsToRow(c, stats, fallbackPaid)
     })
   }, [adminClasses, adminLearners, statsByClass, paidByClass])
 
@@ -174,6 +176,28 @@ export function TreasuryContent() {
     return enrichedClasses.reduce((sum, c) => sum + c.totalPaid, 0)
   }, [enrichedClasses, adminPayments, inRange])
 
+  const prevDateRange = useMemo(() => {
+    if (!dateRange) return null
+    const length = dateRange.end.getTime() - dateRange.start.getTime()
+    const end = new Date(dateRange.start.getTime() - 1)
+    const start = new Date(end.getTime() - length)
+    return { start, end }
+  }, [dateRange])
+
+  const dashboardCharges = useAdminDashboardCharges(dateRange, prevDateRange)
+
+  const loading =
+    isApiDataProvider() &&
+    (paymentsLoading || learnersLoading || classesLoading || statsLoading || dashboardCharges.loading)
+
+  const showError =
+    isApiDataProvider() &&
+    !loading &&
+    Boolean(paymentsError || learnersError || classesError) &&
+    adminPayments.length === 0 &&
+    adminLearners.length === 0 &&
+    adminClasses.length === 0
+
   const filteredManagerExpenses = useMemo(
     () => adminExpenses.filter((e) => e.type === "manager" && inRange(e.createdAt)),
     [inRange]
@@ -186,11 +210,11 @@ export function TreasuryContent() {
   const managerOut = useMemo(() => filteredManagerExpenses.reduce((sum, e) => sum + e.amount, 0), [filteredManagerExpenses])
   const extraOut = useMemo(() => filteredExtraExpenses.reduce((sum, e) => sum + e.amount, 0), [filteredExtraExpenses])
 
-  const net = totalPaid - managerOut - extraOut
-  const pendingClaims = useMemo(
-    () => adminPayments.filter((p) => p.status !== "success" && inRange(p.createdAt)).length,
-    [adminPayments, inRange]
-  )
+  const companyCharges = isApiDataProvider() ? dashboardCharges.companyCharges : managerOut + extraOut
+  const virtualChargesTotal = isApiDataProvider() ? dashboardCharges.virtualChargesTotal : 0
+  const totalCharges = companyCharges
+
+  const net = totalPaid - totalCharges
   // En retard = apprenants non entierement payes (etat instantane, pas filtre par periode).
   // En mode API : somme serveur (unpaid + partiellement paye) issue de /details.
   const overdueCount = useMemo(() => {
@@ -203,33 +227,22 @@ export function TreasuryContent() {
     return adminLearners.filter((l) => l.due > 0 && l.paid < l.due).length
   }, [statsByClass, adminLearners])
 
-  const prevDateRange = useMemo(() => {
-    if (!dateRange) return null
-    const length = dateRange.end.getTime() - dateRange.start.getTime()
-    const end = new Date(dateRange.start.getTime() - 1)
-    const start = new Date(end.getTime() - length)
-    return { start, end }
-  }, [dateRange])
-
   const previousMetrics = useMemo(() => {
     const inPrevRange = (iso: string) =>
       prevDateRange ? isIsoDateInPeriod(iso.slice(0, 10), prevDateRange) : false
-    // Du = snapshot (meme reference que la periode courante).
     const due = enrichedClasses.reduce((sum, c) => sum + c.totalDue, 0)
     const paid = isApiDataProvider()
       ? adminPayments
           .filter((p) => (p.status === "success" || p.status === "manual") && inPrevRange(p.createdAt))
           .reduce((sum, p) => sum + p.amount, 0)
       : enrichedClasses.reduce((sum, c) => sum + c.totalPaid, 0)
-    const mOut = adminExpenses
-      .filter((e) => e.type === "manager" && inPrevRange(e.createdAt))
-      .reduce((sum, e) => sum + e.amount, 0)
-    const eOut = adminExpenses
-      .filter((e) => e.type === "extra" && inPrevRange(e.createdAt))
-      .reduce((sum, e) => sum + e.amount, 0)
-    const charges = mOut + eOut
+    const charges = isApiDataProvider()
+      ? dashboardCharges.previousCompanyCharges
+      : adminExpenses
+          .filter((e) => (e.type === "extra" || e.type === "manager") && inPrevRange(e.createdAt))
+          .reduce((sum, e) => sum + e.amount, 0)
     return { due, paid, charges, net: paid - charges }
-  }, [enrichedClasses, adminPayments, prevDateRange])
+  }, [enrichedClasses, adminPayments, prevDateRange, dashboardCharges.previousCompanyCharges])
 
   function deltaPct(current: number, previous: number): number | null {
     if (previous === 0) return null
@@ -237,6 +250,14 @@ export function TreasuryContent() {
   }
 
   const trendData = useMemo(() => {
+    if (isApiDataProvider() && dateRange) {
+      return buildDashboardCashflowChart({
+        range: dateRange,
+        payments: adminPayments,
+        expenses: dashboardCharges.companyExpensesInPeriod,
+        locale,
+      })
+    }
     if (filteredClasses.length === 0) return []
     const baseOut = [42000, 35000, 180000, 95000, 60000]
     const outTotalFiltered = managerOut + extraOut
@@ -249,7 +270,15 @@ export function TreasuryContent() {
       const out = Math.round((baseOut[idx] ?? 50000) * outFactor)
       return { label: labels[idx]!, in: inSum, out }
     })
-  }, [filteredClasses, managerOut, extraOut])
+  }, [
+    dateRange,
+    adminPayments,
+    dashboardCharges.companyExpensesInPeriod,
+    filteredClasses,
+    managerOut,
+    extraOut,
+    locale,
+  ])
 
   const kpiSeries = useMemo(() => {
     const inSeries = trendData.map((d) => d.in)
@@ -262,6 +291,10 @@ export function TreasuryContent() {
     })
     return { due: dueSeries, in: inSeries, charges: outSeries, net: netSeries }
   }, [trendData])
+
+  if (showError) {
+    return <DataLoadError fullScreen onRetry={handleRetry} retrying={retrying} />
+  }
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -325,9 +358,9 @@ export function TreasuryContent() {
             categoryLabel={t("adm_treasury_tile_cat_charges")}
             categoryHref="/dashboard/admin/finances"
             label={t("adm_treasury_kpi_charges")}
-            value={fcfaNumber(managerOut + extraOut)}
+            value={fcfaNumber(totalCharges)}
             unit="FCFA"
-            deltaPct={deltaPct(managerOut + extraOut, previousMetrics.charges)}
+            deltaPct={deltaPct(totalCharges, previousMetrics.charges)}
             periodLabel={periodLabel}
             series={kpiSeries.charges}
             tone="amber"
@@ -347,6 +380,34 @@ export function TreasuryContent() {
             loading={loading}
           />
         </div>
+
+        {isApiDataProvider() ? (
+          <div className="mt-3 rounded-2xl border border-border/60 bg-card/90 px-4 py-3 shadow-sm backdrop-blur-sm">
+            <p className="text-xs font-semibold text-muted-foreground">{t("adm_treasury_virtual_charges_title")}</p>
+            {loading ? (
+              <Skeleton className="mt-2 h-5 w-40" />
+            ) : dashboardCharges.virtualCharges.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">{t("adm_treasury_virtual_charges_empty")}</p>
+            ) : (
+              <div className="mt-2 space-y-1.5">
+                {dashboardCharges.virtualCharges.map((row) => (
+                  <div key={row.accountId} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground">{row.name}</span>
+                    <span className="font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+                      {formatFcfa(row.total)}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-2 text-sm">
+                  <span className="font-medium">{t("adm_treasury_virtual_charges_total")}</span>
+                  <span className="font-bold tabular-nums text-amber-800 dark:text-amber-300">
+                    {formatFcfa(dashboardCharges.virtualChargesTotal)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm lg:col-span-2">
@@ -381,7 +442,7 @@ export function TreasuryContent() {
           <div className="space-y-3">
             <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
               <p className="text-xs font-semibold text-muted-foreground">{t("adm_treasury_claims_wait")}</p>
-              {loading ? (
+              {loading || claimsLoading ? (
                 <Skeleton className="mt-2 h-7 w-12" />
               ) : (
                 <p className="mt-2 text-2xl font-bold tabular-nums">{pendingClaims}</p>
@@ -413,7 +474,10 @@ export function TreasuryContent() {
         <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm lg:col-span-2">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold tracking-tight">{t("adm_treasury_class_title")}</h3>
+              <div>
+                <h3 className="text-base font-semibold tracking-tight">{t("adm_treasury_class_title")}</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t("adm_treasury_class_sub")}</p>
+              </div>
               <Link href="/dashboard/admin/classes" className="text-xs font-semibold text-primary transition hover:opacity-90">
                 {t("adm_treasury_all_classes")}
               </Link>
@@ -441,15 +505,16 @@ export function TreasuryContent() {
                         </tr>
                       ))
                     : enrichedClasses.map((cls) => {
-                    const rest = cls.totalDue - cls.totalPaid
+                    const dueExpected = cls.totalDueExpected ?? cls.totalDue
+                    const rest = cls.totalRemaining ?? Math.max(0, dueExpected - cls.totalPaid)
                     const ratio =
-                      cls.totalPaid > 0 && cls.totalDue > 0
-                        ? Math.max(1, Math.round((cls.totalPaid / cls.totalDue) * 100))
+                      cls.totalPaid > 0 && dueExpected > 0
+                        ? Math.max(1, Math.round((cls.totalPaid / dueExpected) * 100))
                         : 0
                     return (
                       <tr key={cls.id} className="border-t">
                         <td className="px-3 py-2 font-medium">{cls.name}</td>
-                        <td className="px-3 py-2">{formatFcfa(cls.totalDue)}</td>
+                        <td className="px-3 py-2">{formatFcfa(dueExpected)}</td>
                         <td className="px-3 py-2">{formatFcfa(cls.totalPaid)}</td>
                         <td className="px-3 py-2">{formatFcfa(rest)}</td>
                         <td className="px-3 py-2">

@@ -12,20 +12,22 @@ const ROLE_FROM_CODE: Record<number, StaffRole> = {
   500: "accountant",
   400: "accountant",
   300: "accountant",
-  200: "support",
+  200: "collaborateur",
 }
 
 /** Normalizes a backend role (numeric code or string) into a UI role. */
 export function mapStaffRole(value: unknown): StaffRole {
-  if (typeof value === "number") return ROLE_FROM_CODE[value] ?? "support"
+  if (typeof value === "number") return ROLE_FROM_CODE[value] ?? "collaborateur"
   const normalized = String(value ?? "").toLowerCase().trim()
   if (normalized === "admin" || normalized === "administrator") return "admin"
   if (normalized === "manager") return "manager"
   if (normalized === "accountant" || normalized === "comptable" || normalized === "auditor") {
     return "accountant"
   }
-  if (normalized === "support") return "support"
-  return "support"
+  if (normalized === "collaborateur" || normalized === "collaborator" || normalized === "support") {
+    return "collaborateur"
+  }
+  return "collaborateur"
 }
 
 function pickStaffRecord(data: unknown): Record<string, unknown> {
@@ -94,6 +96,32 @@ export function parseStaffMember(data: unknown): StaffMember {
   const mapped = mapApiStaffMember(data)
   if (!mapped.id.trim()) throw new Error("INVALID_STAFF_RESPONSE")
   return mapped
+}
+
+function readCredentialsEmailSent(data: unknown): boolean {
+  if (!data || typeof data !== "object") return true
+  const record = data as Record<string, unknown>
+  if (typeof record.credentialsEmailSent === "boolean") return record.credentialsEmailSent
+  if (record.data && typeof record.data === "object") {
+    return readCredentialsEmailSent(record.data)
+  }
+  return true
+}
+
+export function parseStaffCreateResponse(data: unknown): {
+  member: StaffMember
+  credentialsEmailSent: boolean
+} {
+  return {
+    member: parseStaffMember(data),
+    credentialsEmailSent: readCredentialsEmailSent(data),
+  }
+}
+
+export function parseStaffRegeneratePasswordResponse(data: unknown): {
+  credentialsEmailSent: boolean
+} {
+  return { credentialsEmailSent: readCredentialsEmailSent(data) }
 }
 
 export function parseStaffMemberList(data: unknown): StaffMember[] {

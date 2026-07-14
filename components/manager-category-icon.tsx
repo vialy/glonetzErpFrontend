@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react"
 import {
   Droplets,
   GraduationCap,
+  HandCoins,
   MoreHorizontal,
   Package,
   Truck,
@@ -21,6 +22,7 @@ const MAP: Record<ManagerCategoryOption["icon"], LucideIcon> = {
   Wrench,
   Truck,
   GraduationCap,
+  HandCoins,
   MoreHorizontal,
 }
 
@@ -31,6 +33,6 @@ export function ManagerCategoryIcon({
   icon: ManagerCategoryOption["icon"]
   className?: string
 }) {
-  const Cmp = MAP[icon]
+  const Cmp = MAP[icon] ?? MoreHorizontal
   return <Cmp className={className} />
 }

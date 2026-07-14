@@ -3,55 +3,101 @@
 import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Paperclip, Sparkles } from "lucide-react"
-import { MANAGER_EXPENSE_CATEGORIES } from "@/domains/manager-wallet"
-import type { ManagerPaymentMethod } from "@/domains/manager-wallet/types"
 import { ManagerCategoryIcon } from "@/components/manager-category-icon"
+import { ManagerCustomCategoryDialog } from "@/components/manager/manager-custom-category-dialog"
 import { MobileBackButton } from "@/components/mobile-back-button"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { useAuth } from "@/hooks/use-auth"
 import { useLocale } from "@/hooks/use-locale"
+import { useManagerExpenseCategories } from "@/hooks/use-manager-expense-categories"
 import { useManagerWallet } from "@/hooks/use-manager-wallet"
 import { formatFcfa } from "@/lib/audit-date-range"
 import { cn } from "@/lib/utils"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export default function ManagerNouvelleDepensePage() {
   const { t } = useLocale()
-  const { summary, expenses, createExpense, refresh } = useManagerWallet()
+  const { session } = useAuth()
+  const managerId = session?.staffUserId ?? session?.email ?? "default"
+  const { categories, addCustomCategory, getCategoryLabel } = useManagerExpenseCategories(managerId)
+  const { summary, expenses, createExpense, refresh, loading } = useManagerWallet()
   const recentExpenses = useMemo(() => expenses.slice(0, 5), [expenses])
   const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [otherDialogOpen, setOtherDialogOpen] = useState(false)
   const [amount, setAmount] = useState("")
   const [spentDate, setSpentDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [method, setMethod] = useState<ManagerPaymentMethod>("cash")
   const [comment, setComment] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const selectedCat = useMemo(
-    () => MANAGER_EXPENSE_CATEGORIES.find((c) => c.id === categoryId),
-    [categoryId]
+    () => categories.find((c) => c.id === categoryId) ?? null,
+    [categories, categoryId],
   )
+
+  const parsedAmount = useMemo(() => {
+    const num = Number(amount)
+    if (!Number.isFinite(num) || num <= 0 || !Number.isInteger(num)) return null
+    return num
+  }, [amount])
+
+  const exceedsBudget = useMemo(() => {
+    if (parsedAmount === null || !summary) return false
+    return parsedAmount > summary.remaining
+  }, [parsedAmount, summary])
+
+  const canSubmit = useMemo(() => {
+    if (submitting || loading) return false
+    if (!selectedCat || selectedCat.id === "other") return false
+    if (parsedAmount === null) return false
+    if (exceedsBudget) return false
+    return true
+  }, [exceedsBudget, loading, parsedAmount, selectedCat, submitting])
+
+  function handleCategoryClick(id: string) {
+    if (id === "other") {
+      setOtherDialogOpen(true)
+      return
+    }
+    setCategoryId(id)
+  }
+
+  async function handleAddCustomCategory(label: string) {
+    const created = await addCustomCategory(label)
+    if (!created) throw new Error("EXPENSE_CATEGORY_CREATE_FAILED")
+    setCategoryId(created.id)
+  }
 
   const submit = async () => {
     if (submitting) return
     setSubmitting(true)
     setMessage(null)
     try {
-      if (!selectedCat) {
+      if (!selectedCat || selectedCat.id === "other") {
         setMessage({ type: "err", text: t("mgr_err_category") })
         return
       }
       const num = Number(amount)
+      if (!Number.isFinite(num) || num <= 0 || !Number.isInteger(num)) {
+        setMessage({ type: "err", text: t("mgr_err_amount") })
+        return
+      }
+      if (summary && num > summary.remaining) {
+        setMessage({ type: "err", text: t("mgr_err_insufficient") })
+        return
+      }
       await createExpense({
         categoryId: selectedCat.id,
-        categoryLabel: t(selectedCat.labelKey),
+        categoryLabel: getCategoryLabel(selectedCat),
         amount: num,
         spentAt: spentDate,
-        paymentMethod: method,
         comment: comment || undefined,
         attachmentFile: file,
       })
@@ -59,6 +105,7 @@ export default function ManagerNouvelleDepensePage() {
       setComment("")
       setFile(null)
       setCategoryId(null)
+      setConfirmOpen(false)
       setMessage({ type: "ok", text: t("mgr_success") })
       refresh()
     } catch (e) {
@@ -94,7 +141,11 @@ export default function ManagerNouvelleDepensePage() {
             <p className="mt-1 text-sm text-white/80 leading-relaxed">{t("mgr_new_hint")}</p>
           </div>
         </div>
-        {summary ? (
+        {loading && !summary ? (
+          <div className="mt-4 rounded-xl bg-white/10 px-3 py-2.5">
+            <Skeleton className="h-5 w-40 bg-white/20" />
+          </div>
+        ) : summary ? (
           <div className="mt-4 flex flex-wrap gap-3 rounded-xl bg-white/10 px-3 py-2.5 text-sm">
             <span className="text-white/75">{t("mgr_card_remaining")}:</span>
             <span className="font-semibold tabular-nums">{formatFcfa(summary.remaining)}</span>
@@ -120,29 +171,31 @@ export default function ManagerNouvelleDepensePage() {
           <section>
             <h2 className="mb-3 text-sm font-semibold text-foreground">{t("mgr_pick_category")}</h2>
             <div className="-mx-1 flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-thin [scrollbar-width:thin]">
-              {MANAGER_EXPENSE_CATEGORIES.map((c) => {
+              {categories.map((c) => {
                 const active = categoryId === c.id
+                const isOther = c.id === "other"
                 return (
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() => setCategoryId(c.id)}
+                    onClick={() => handleCategoryClick(c.id)}
                     className={cn(
                       "flex min-w-[132px] max-w-[140px] shrink-0 snap-start flex-col items-center gap-2 rounded-2xl border-2 bg-card p-4 text-center shadow-sm transition-all active:scale-[0.98]",
-                      active
+                      active && !isOther
                         ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                        : "border-border/80 hover:border-primary/35 hover:bg-muted/40"
+                        : "border-border/80 hover:border-primary/35 hover:bg-muted/40",
+                      isOther && "border-dashed"
                     )}
                   >
                     <span
                       className={cn(
                         "flex size-11 items-center justify-center rounded-xl",
-                        active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        active && !isOther ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                       )}
                     >
                       <ManagerCategoryIcon icon={c.icon} className="size-5" />
                     </span>
-                    <span className="text-xs font-medium leading-tight text-balance">{t(c.labelKey)}</span>
+                    <span className="text-xs font-medium leading-tight text-balance">{getCategoryLabel(c)}</span>
                   </button>
                 )
               })}
@@ -151,24 +204,9 @@ export default function ManagerNouvelleDepensePage() {
 
           <Card className="mt-6 border-border/70 shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold">{t("mgr_payment_method")}</CardTitle>
+              <CardTitle className="text-base font-semibold">{t("mgr_amount")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="space-y-2">
-                <Label>{t("mgr_payment_method")}</Label>
-                <Select value={method} onValueChange={(v) => setMethod(v as ManagerPaymentMethod)}>
-                  <SelectTrigger className="h-11 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">{t("mgr_method_cash")}</SelectItem>
-                    <SelectItem value="mtn_momo">{t("mgr_method_mtn")}</SelectItem>
-                    <SelectItem value="orange_money">{t("mgr_method_om")}</SelectItem>
-                    <SelectItem value="bank_transfer">{t("mgr_method_bank")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="mgr-amt">{t("mgr_amount")}</Label>
@@ -176,12 +214,23 @@ export default function ManagerNouvelleDepensePage() {
                     id="mgr-amt"
                     type="number"
                     min={1}
+                    max={summary && summary.remaining > 0 ? summary.remaining : undefined}
                     inputMode="numeric"
                     placeholder="0"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="h-11 rounded-xl"
+                    className={cn("h-11 rounded-xl", exceedsBudget && "border-destructive focus-visible:ring-destructive/30")}
+                    aria-invalid={exceedsBudget}
                   />
+                  {exceedsBudget && summary ? (
+                    <p className="text-sm text-destructive">
+                      {t("mgr_amount_exceeds_budget").replace("{remaining}", formatFcfa(summary.remaining))}
+                    </p>
+                  ) : summary && !loading ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t("mgr_amount_budget_hint").replace("{remaining}", formatFcfa(summary.remaining))}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="mgr-date">{t("mgr_date")}</Label>
@@ -235,8 +284,8 @@ export default function ManagerNouvelleDepensePage() {
           <div className="mt-8">
             <Button
               className="h-12 w-full rounded-xl text-base font-semibold shadow-md shadow-primary/20 md:max-w-md"
-              disabled={submitting}
-              onClick={() => void submit()}
+              disabled={!canSubmit}
+              onClick={() => canSubmit && setConfirmOpen(true)}
             >
               {submitting ? t("mgr_submitting") : t("mgr_submit")}
             </Button>
@@ -250,20 +299,30 @@ export default function ManagerNouvelleDepensePage() {
                 <CardTitle className="text-sm">Résumé budget</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">{t("mgr_card_budget")}</span>
-                  <span className="font-semibold tabular-nums">{summary ? formatFcfa(summary.envelopeCeiling) : "-"}</span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">{t("mgr_card_spent")}</span>
-                  <span className="font-semibold tabular-nums">{summary ? formatFcfa(summary.totalSpent) : "-"}</span>
-                </div>
-                <div className="flex justify-between gap-2 border-t border-border/50 pt-2">
-                  <span className="text-muted-foreground">{t("mgr_card_remaining")}</span>
-                  <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                    {summary ? formatFcfa(summary.remaining) : "-"}
-                  </span>
-                </div>
+                {loading && !summary ? (
+                  <>
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("mgr_card_budget")}</span>
+                      <span className="font-semibold tabular-nums">{summary ? formatFcfa(summary.envelopeCeiling) : "-"}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("mgr_card_spent")}</span>
+                      <span className="font-semibold tabular-nums">{summary ? formatFcfa(summary.totalSpent) : "-"}</span>
+                    </div>
+                    <div className="flex justify-between gap-2 border-t border-border/50 pt-2">
+                      <span className="text-muted-foreground">{t("mgr_card_remaining")}</span>
+                      <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                        {summary ? formatFcfa(summary.remaining) : "-"}
+                      </span>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -298,6 +357,40 @@ export default function ManagerNouvelleDepensePage() {
           </div>
         </aside>
       </div>
+
+      <ManagerCustomCategoryDialog
+        open={otherDialogOpen}
+        onOpenChange={setOtherDialogOpen}
+        onAdd={handleAddCustomCategory}
+      />
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("mgr_confirm_expense_title")}</DialogTitle>
+            <DialogDescription>
+              {selectedCat && parsedAmount
+                ? t("mgr_confirm_expense_desc")
+                    .replace("{amount}", formatFcfa(parsedAmount))
+                    .replace("{category}", getCategoryLabel(selectedCat))
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button type="button" onClick={() => setConfirmOpen(false)} className="rounded-lg border px-3 py-1.5 text-sm">
+              {t("mgr_cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void submit()}
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {submitting ? t("mgr_submitting") : t("mgr_confirm_expense_btn")}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

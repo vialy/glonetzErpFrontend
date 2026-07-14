@@ -1,6 +1,8 @@
 "use client"
 
 import dynamic from "next/dynamic"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 
 const TreasuryContent = dynamic(
@@ -34,6 +36,13 @@ function DashboardSkeleton() {
 
 export default function DashboardPage() {
   const { role } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (role === "collaborateur") {
+      router.replace("/dashboard/collaborateur/apprenants")
+    }
+  }, [role, router])
 
   if (role === "accountant") {
     return <AccountantDashboard />
@@ -41,6 +50,10 @@ export default function DashboardPage() {
 
   if (role === "manager") {
     return <ManagerDashboard />
+  }
+
+  if (role === "collaborateur") {
+    return <DashboardSkeleton />
   }
 
   return <TreasuryContent />

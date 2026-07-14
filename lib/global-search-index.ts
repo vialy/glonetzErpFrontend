@@ -1,5 +1,4 @@
 import { getDashboardNavSections } from "@/components/sidebar-nav"
-import { buildManagerScopedPayments } from "@/hooks/use-manager-payments"
 import { ClaimsService } from "@/services/claims.service"
 import {
   getAdminClasses,
@@ -9,7 +8,6 @@ import {
 } from "@/services/admin-mock.service"
 import type { StaffClass } from "@/domains/classes/types"
 import type { TranslationKey } from "@/services/i18n"
-import { ManagerLearnersService } from "@/services/manager-learners.service"
 import type { ClaimRecord, ClaimStatus } from "@/services/claims.service"
 import type { UserRole } from "@/types"
 
@@ -97,13 +95,13 @@ function pageItems(role: UserRole | null, t: GlobalSearchTranslate): GlobalSearc
     for (const nav of section.items) {
       if (nav.isLogout || !nav.href || seen.has(nav.href)) continue
       seen.add(nav.href)
-      const title = t(nav.labelKey)
+      const title = nav.label ?? (nav.labelKey ? t(nav.labelKey) : nav.href)
       items.push({
         id: `page:${nav.href}`,
         group: "pages",
         title,
         href: nav.href,
-        keywords: joinKeywords(title, nav.href, nav.labelKey),
+        keywords: joinKeywords(title, nav.href, nav.labelKey ?? nav.label ?? ""),
       })
     }
   }
@@ -115,6 +113,8 @@ function pageItems(role: UserRole | null, t: GlobalSearchTranslate): GlobalSearc
     { role: "manager", key: "adm_learn_new", href: "/dashboard/manager/apprenants/nouveau" },
     { role: "manager", key: "adm_learn_import", href: "/dashboard/manager/apprenants/import" },
     { role: "manager", key: "mgr_nav_new", href: "/dashboard/manager/depenses/nouvelle" },
+    { role: "collaborateur", key: "adm_learn_new", href: "/dashboard/collaborateur/apprenants/nouveau" },
+    { role: "collaborateur", key: "adm_learn_import", href: "/dashboard/collaborateur/apprenants/import" },
   ]
 
   for (const extra of extras) {
@@ -134,7 +134,11 @@ function pageItems(role: UserRole | null, t: GlobalSearchTranslate): GlobalSearc
   return items
 }
 
-function adminLearnerItems(t: GlobalSearchTranslate, classes?: StaffClass[]): GlobalSearchItem[] {
+function adminLearnerItems(
+  t: GlobalSearchTranslate,
+  classes?: StaffClass[],
+  learnerHrefBase = "/dashboard/admin/apprenants",
+): GlobalSearchItem[] {
   const classNameById = new Map((classes ?? getAdminClasses()).map((c) => [c.id, c.name]))
 
   return getAdminLearners().map((learner) => {
@@ -146,7 +150,7 @@ function adminLearnerItems(t: GlobalSearchTranslate, classes?: StaffClass[]): Gl
       group: "learners" as const,
       title,
       subtitle,
-      href: `/dashboard/admin/apprenants/${learner.id}`,
+      href: `${learnerHrefBase}/${learner.id}`,
       keywords: joinKeywords(
         title,
         learner.phone,
@@ -158,24 +162,16 @@ function adminLearnerItems(t: GlobalSearchTranslate, classes?: StaffClass[]): Gl
   })
 }
 
-function managerLearnerItems(): GlobalSearchItem[] {
-  return ManagerLearnersService.getAll().map((learner) => ({
-    id: `learner:${learner.id}`,
-    group: "learners" as const,
-    title: learner.fullName,
-    subtitle: [learner.phone, learner.className].filter(Boolean).join(" · "),
-    href: `/dashboard/manager/apprenants/${learner.id}`,
-    keywords: joinKeywords(learner.fullName, learner.phone, learner.id, learner.className),
-  }))
-}
-
-function adminClassItems(classes?: StaffClass[]): GlobalSearchItem[] {
+function adminClassItems(
+  classes?: StaffClass[],
+  classHrefBase = "/dashboard/admin/classes",
+): GlobalSearchItem[] {
   return (classes ?? getAdminClasses()).map((cls) => ({
     id: `class:${cls.id}`,
     group: "classes" as const,
     title: cls.name,
     subtitle: [cls.session, cls.status].filter(Boolean).join(" · "),
-    href: `/dashboard/admin/classes/${cls.id}`,
+    href: `${classHrefBase}/${cls.id}`,
     keywords: joinKeywords(cls.name, cls.session, cls.description, cls.id, cls.status),
   }))
 }
@@ -283,10 +279,10 @@ export function buildGlobalSearchIndex(
   }
 
   if (role === "manager") {
-    items.push(...managerLearnerItems())
+    items.push(...adminLearnerItems(t, options?.classes, "/dashboard/manager/apprenants"))
     items.push(
       ...paymentItems(
-        buildManagerScopedPayments(),
+        getAdminPayments(),
         (id) => `/dashboard/manager/apprenants/${id}`,
         "/dashboard/manager/paiements",
       ),
@@ -296,6 +292,11 @@ export function buildGlobalSearchIndex(
 
   if (role === "accountant") {
     items.push(...claimItems(ClaimsService.getAll(), "/dashboard/comptable/reclamations", t))
+  }
+
+  if (role === "collaborateur") {
+    items.push(...adminLearnerItems(t, options?.classes, "/dashboard/collaborateur/apprenants"))
+    items.push(...adminClassItems(options?.classes, "/dashboard/collaborateur/classes"))
   }
 
   return items

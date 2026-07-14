@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import {
   ArrowUpRight,
   Filter,
@@ -20,7 +20,7 @@ import {
 } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { type AdminClassStatus } from "@/services/admin-mock.service"
-import { classesService, type StaffClassStats } from "@/domains/classes"
+import { classesService, applyClassStatsToRow, type StaffClassStats } from "@/domains/classes"
 import { isApiDataProvider } from "@/lib/data-provider"
 import { getCached, setCached } from "@/lib/client-cache"
 import { enrichClassesWithLearnerStats } from "@/domains/classes/enrich-classes"
@@ -28,11 +28,13 @@ import { useAdminClassesQuery } from "@/hooks/use-admin-classes"
 import { useAdminLearnersQuery } from "@/hooks/use-admin-learners"
 import { useStaffPaidAggregates } from "@/hooks/use-staff-paid-aggregates"
 import { useLocale } from "@/hooks/use-locale"
+import { useAuth } from "@/hooks/use-auth"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminEmptyState } from "@/components/admin/admin-empty-state"
+import { DataLoadError } from "@/components/data-load-error"
 import { ClassSearchSelect } from "@/components/admin/class-search-select"
 import { MobileBackButton } from "@/components/mobile-back-button"
 
@@ -45,6 +47,12 @@ function classOverlapsDateRange(periodStart: string, periodEnd: string, dateFrom
 
 export default function AdminClassesPage() {
   const { t, locale } = useLocale()
+  const { role } = useAuth()
+  const pathname = usePathname() ?? "/dashboard/admin/classes"
+  const classesBase = pathname.startsWith("/dashboard/collaborateur")
+    ? "/dashboard/collaborateur/classes"
+    : "/dashboard/admin/classes"
+  const canManageClasses = role === "admin" || role === "manager"
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
@@ -105,19 +113,11 @@ export default function AdminClassesPage() {
   const classesWithStats = useMemo(() => {
     const enriched = enrichClassesWithLearnerStats(adminClassesList, adminLearners)
     if (!isApiDataProvider()) return enriched
-    // Du / effectif : rollup serveur (/details) quand disponible.
-    // Encaisse : toujours la somme des paiements reels de la classe (source unique),
-    // pour rester coherent avec le "total paye" des apprenants.
     return enriched.map((c) => {
       const stats = statsByClass[c.id]
-      const totalPaid = paidByClass[c.id] ?? 0
-      if (!stats) return { ...c, totalPaid }
-      return {
-        ...c,
-        learnersCount: stats.studentCount || c.learnersCount,
-        totalDue: stats.totalExpected,
-        totalPaid,
-      }
+      const fallbackPaid = paidByClass[c.id] ?? 0
+      if (!stats) return { ...c, totalPaid: fallbackPaid }
+      return applyClassStatsToRow(c, stats, fallbackPaid)
     })
   }, [adminClassesList, adminLearners, statsByClass, paidByClass])
   const classesOptions = useMemo(() => classesWithStats.map((c) => ({ id: c.id, name: c.name })), [classesWithStats])
@@ -162,6 +162,18 @@ export default function AdminClassesPage() {
     setStatusFilter("all")
   }
 
+  const [retrying, setRetrying] = useState(false)
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    await refresh()
+    setRetrying(false)
+  }, [refresh])
+
+  // Erreur "plein écran" quand le chargement a échoué et qu'il n'y a rien à afficher.
+  if (error && adminClassesList.length === 0) {
+    return <DataLoadError fullScreen onRetry={handleRetry} retrying={retrying} />
+  }
+
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex-1 px-4 pt-4 pb-8 md:px-6 lg:px-8">
@@ -171,10 +183,10 @@ export default function AdminClassesPage() {
           subtitle={t("adm_class_subtitle")}
           gradientClassName="from-sky-600 via-indigo-600 to-violet-600"
           actions={
-            <>
+            canManageClasses ? (
               <button
                 onClick={() => {
-                  router.push("/dashboard/admin/classes/nouvelle")
+                  router.push(`${classesBase}/nouvelle`)
                 }}
                 type="button"
                 className="inline-flex items-center gap-2 rounded-xl bg-primary-foreground px-4 py-2 text-xs font-semibold text-primary shadow-md transition-colors hover:bg-white"
@@ -182,7 +194,7 @@ export default function AdminClassesPage() {
                 <Plus className="size-3.5" />
                 <span>{t("adm_class_new_btn")}</span>
               </button>
-            </>
+            ) : undefined
           }
         />
 
@@ -413,9 +425,20 @@ export default function AdminClassesPage() {
             : null}
           {!loading &&
             filteredClasses.map((cls) => {
-            const ratio = cls.totalDue > 0 ? cls.totalPaid / cls.totalDue : 0
+            const dueExpected = cls.totalDueExpected ?? cls.totalDue
+            const remaining = cls.totalRemaining ?? Math.max(0, dueExpected - cls.totalPaid)
+            const ratio = dueExpected > 0 ? cls.totalPaid / dueExpected : 0
             const ratioPct = cls.totalPaid > 0 ? Math.max(1, Math.round(ratio * 100)) : 0
-            const remaining = cls.totalDue - cls.totalPaid
+            const paidExceedsExpected = cls.totalPaid > dueExpected + 0.01
+            const headcountLabel = isApiDataProvider() && cls.sessionEnrolledCount != null
+              ? t("adm_class_card_headcount")
+                  .replace("{current}", String(cls.learnersCount))
+                  .replace("{enrolled}", String(cls.sessionEnrolledCount))
+                  .replace("{promoted}", String(cls.sessionPromotedCount ?? 0))
+                  .replace("{amount}", formatMoney(cls.tuitionAmount))
+              : t("adm_class_card_learners")
+                  .replace("{n}", String(cls.learnersCount))
+                  .replace("{amount}", formatMoney(cls.tuitionAmount))
             return (
               <div
                 key={cls.id}
@@ -430,17 +453,29 @@ export default function AdminClassesPage() {
                         <span className="truncate">{cls.session}</span>
                       </div>
                       <Link
-                        href={`/dashboard/admin/classes/${cls.id}`}
+                        href={`${classesBase}/${cls.id}`}
                         className="mt-2 block text-base font-bold tracking-tight text-foreground transition hover:text-primary"
                       >
                         {cls.name}
                         <Sparkles className="ml-1 inline size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                       </Link>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {t("adm_class_card_learners")
-                          .replace("{n}", String(cls.learnersCount))
-                          .replace("{amount}", formatMoney(cls.tuitionAmount))}
+                        {headcountLabel}
                       </p>
+                      {isApiDataProvider() && (cls.totalDue > 0 || dueExpected > 0) ? (
+                        <div className="mt-1 space-y-0.5">
+                          {cls.totalDue > 0 ? (
+                            <p className="text-xs font-medium text-foreground/80">
+                              {t("adm_class_card_due_current").replace("{amount}", formatMoney(cls.totalDue))}
+                            </p>
+                          ) : null}
+                          {dueExpected > 0 ? (
+                            <p className="text-xs font-semibold text-foreground">
+                              {t("adm_class_card_due_expected").replace("{amount}", formatMoney(dueExpected))}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {cls.description?.trim() ? (
                         <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                           {cls.description}
@@ -487,6 +522,11 @@ export default function AdminClassesPage() {
                         {formatMoney(Math.max(0, remaining))}
                       </span>
                     </p>
+                    {isApiDataProvider() && paidExceedsExpected ? (
+                      <p className="mt-1 text-[10px] leading-snug text-amber-800/90 dark:text-amber-200/90">
+                        {t("adm_class_card_finance_hint")}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 h-24 w-full rounded-xl bg-muted/30 p-1">
@@ -511,23 +551,27 @@ export default function AdminClassesPage() {
 
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Button size="sm" className="flex-1 rounded-xl" asChild>
-                      <Link href={`/dashboard/admin/classes/${cls.id}`}>
+                      <Link href={`${classesBase}/${cls.id}`}>
                         {t("adm_class_btn_fiche")}
                         <ArrowUpRight className="ml-1 size-3.5 opacity-80" />
                       </Link>
                     </Button>
-                    <Button size="sm" variant="secondary" className="flex-1 rounded-xl" asChild>
-                      <Link href={`/dashboard/admin/classes/${cls.id}/promotion`}>
-                        <GraduationCap className="mr-1 size-3.5" />
-                        {t("adm_class_btn_promote")}
-                      </Link>
-                    </Button>
-                    <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" asChild>
-                      <Link href={`/dashboard/admin/classes/${cls.id}/edit`}>
-                        <Pencil className="mr-1 size-3.5" />
-                        {t("adm_class_btn_edit")}
-                      </Link>
-                    </Button>
+                    {canManageClasses ? (
+                      <>
+                        <Button size="sm" variant="secondary" className="flex-1 rounded-xl" asChild>
+                          <Link href={`${classesBase}/${cls.id}/promotion`}>
+                            <GraduationCap className="mr-1 size-3.5" />
+                            {t("adm_class_btn_promote")}
+                          </Link>
+                        </Button>
+                        <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" asChild>
+                          <Link href={`${classesBase}/${cls.id}/edit`}>
+                            <Pencil className="mr-1 size-3.5" />
+                            {t("adm_class_btn_edit")}
+                          </Link>
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </div>

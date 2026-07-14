@@ -14,7 +14,17 @@ import { MobileBackButton } from "@/components/mobile-back-button"
 import { classesService } from "@/domains/classes"
 import { useActionFeedback } from "@/hooks/use-action-feedback"
 import { useLocale } from "@/hooks/use-locale"
+import {
+  CLASS_LEVELS,
+  CLASS_TIME_SLOTS,
+  classTimeSlotLabel,
+  type ClassLevel,
+  type ClassTimeSlot,
+} from "@/lib/class-metadata"
 import { deriveClassSession } from "@/lib/class-session"
+
+const selectClassName =
+  "flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 export default function NouvelleClassePage() {
   const { t, locale } = useLocale()
@@ -22,6 +32,8 @@ export default function NouvelleClassePage() {
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
   const router = useRouter()
   const [name, setName] = useState("")
+  const [level, setLevel] = useState<ClassLevel | "">("")
+  const [timeSlot, setTimeSlot] = useState<ClassTimeSlot | "">("")
   const [description, setDescription] = useState("")
   const [periodStart, setPeriodStart] = useState("")
   const [periodEnd, setPeriodEnd] = useState("")
@@ -38,6 +50,8 @@ export default function NouvelleClassePage() {
   const errors = useMemo(() => {
     const list: string[] = []
     if (!name.trim()) list.push(t("adm_class_new_err_name"))
+    if (!level) list.push(t("adm_class_new_err_level"))
+    if (!timeSlot) list.push(t("adm_class_new_err_time_slot"))
     if (!periodStart) list.push(t("adm_class_new_err_start"))
     if (!periodEnd) list.push(t("adm_class_new_err_end"))
     if (periodStart && periodEnd && periodStart > periodEnd) list.push(t("adm_class_new_err_order"))
@@ -45,7 +59,7 @@ export default function NouvelleClassePage() {
     if (!tuition.trim() || Number.isNaN(amount) || amount <= 0) list.push(t("adm_class_new_err_tuition"))
     if (description.length > 1000) list.push(t("adm_class_new_err_description_len"))
     return list
-  }, [name, description, periodStart, periodEnd, tuition, t])
+  }, [name, level, timeSlot, description, periodStart, periodEnd, tuition, t])
 
   async function submit() {
     setShowErrors(true)
@@ -57,9 +71,12 @@ export default function NouvelleClassePage() {
         classesService.create({
           name: name.trim(),
           description: description.trim(),
+          level: level as ClassLevel,
+          timeSlot: timeSlot as ClassTimeSlot,
           periodStart,
           periodEnd,
           tuitionAmount: amount,
+          status: "active",
           locale: locale === "en" ? "en" : "fr",
         }),
       {
@@ -118,6 +135,42 @@ export default function NouvelleClassePage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="nc-level">{t("adm_class_new_level")}</Label>
+                <select
+                  id="nc-level"
+                  className={selectClassName}
+                  value={level}
+                  onChange={(e) => setLevel(e.target.value as ClassLevel)}
+                  required
+                >
+                  <option value="">{t("adm_class_new_level_placeholder")}</option>
+                  {CLASS_LEVELS.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="nc-slot">{t("adm_class_new_time_slot")}</Label>
+                <select
+                  id="nc-slot"
+                  className={selectClassName}
+                  value={timeSlot}
+                  onChange={(e) => setTimeSlot(e.target.value as ClassTimeSlot)}
+                  required
+                >
+                  <option value="">{t("adm_class_new_time_slot_placeholder")}</option>
+                  {CLASS_TIME_SLOTS.map((item) => (
+                    <option key={item} value={item}>
+                      {item} — {classTimeSlotLabel(item, locale === "en" ? "en" : "fr")}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="nc-description">{t("adm_class_new_description")}</Label>

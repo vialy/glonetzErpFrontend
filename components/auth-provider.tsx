@@ -14,6 +14,7 @@ import { ApiClientError } from "@/core/api/client"
 import { STAFF_SESSION_EXPIRED_EVENT } from "@/core/api/unauthorized"
 import { authService } from "@/domains/auth"
 import { clearAllCached } from "@/lib/client-cache"
+import { markWelcomePending } from "@/lib/welcome-session"
 import type { LoginResponse } from "@/types"
 
 type AuthStatus = "loading" | "authenticated" | "anonymous"
@@ -120,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         applySession(response)
 
         if (!response.mustChangePin) {
+          markWelcomePending()
           const next =
             typeof window !== "undefined"
               ? new URLSearchParams(window.location.search).get("next")

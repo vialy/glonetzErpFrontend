@@ -1,15 +1,20 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Wallet } from "lucide-react"
 import { useManagerWallet } from "@/hooks/use-manager-wallet"
-import type { ManagerPaymentMethod } from "@/domains/manager-wallet/types"
 import { ManagerPeriodFilter } from "@/components/manager/manager-period-filter"
+import {
+  ALL_EXPENSE_CATEGORIES,
+  ManagerExpenseCategoryFilter,
+} from "@/components/manager/manager-expense-category-filter"
+import { DataLoadError } from "@/components/data-load-error"
 import { MobileBackButton } from "@/components/mobile-back-button"
+import { ExpenseCardListSkeleton } from "@/components/loading/data-skeletons"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useLocale } from "@/hooks/use-locale"
 import { computePeriodRange, defaultManagerPeriodFilter, isIsoDateInPeriod, type ManagerPeriodFilterValue } from "@/lib/manager-period-range"
 import { formatFcfa } from "@/lib/audit-date-range"
-import type { TranslationKey } from "@/services/i18n"
 
 function formatDay(iso: string) {
   return new Date(iso).toLocaleDateString("fr-FR", {
@@ -19,23 +24,32 @@ function formatDay(iso: string) {
   })
 }
 
-function payLabelExpense(m: ManagerPaymentMethod, t: (k: TranslationKey) => string) {
-  if (m === "cash") return t("mgr_method_cash")
-  if (m === "mtn_momo") return t("mgr_method_mtn")
-  if (m === "orange_money") return t("mgr_method_om")
-  return t("mgr_method_bank")
-}
-
 export default function ManagerDepensesListePage() {
   const { t } = useLocale()
-  const { expenses } = useManagerWallet()
+  const { expenses, loading, error, refresh } = useManagerWallet()
+  const [retrying, setRetrying] = useState(false)
   const [period, setPeriod] = useState<ManagerPeriodFilterValue>(() => defaultManagerPeriodFilter())
+  const [categoryId, setCategoryId] = useState<string>(ALL_EXPENSE_CATEGORIES)
+
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    await refresh()
+    setRetrying(false)
+  }, [refresh])
+
+  if (error && expenses.length === 0) {
+    return <DataLoadError fullScreen onRetry={handleRetry} retrying={retrying} />
+  }
 
   const range = useMemo(() => computePeriodRange(period), [period])
 
   const filteredExpenses = useMemo(() => {
-    return expenses.filter((e) => isIsoDateInPeriod(e.spentAt, range))
-  }, [expenses, range])
+    return expenses.filter((e) => {
+      if (!isIsoDateInPeriod(e.spentAt, range)) return false
+      if (categoryId !== ALL_EXPENSE_CATEGORIES && e.categoryId !== categoryId) return false
+      return true
+    })
+  }, [expenses, range, categoryId])
 
   const totalDepenses = useMemo(() => filteredExpenses.reduce((s, e) => s + e.amount, 0), [filteredExpenses])
 
@@ -50,18 +64,26 @@ export default function ManagerDepensesListePage() {
       </header>
 
       <div className="mb-8 space-y-4">
-        <ManagerPeriodFilter
-          value={period}
-          onChange={setPeriod}
-          hint={t("mgr_list_filter_hint")}
-          summary={expensesCountLabel}
-        />
-        {filteredExpenses.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
+          <ManagerPeriodFilter
+            value={period}
+            onChange={setPeriod}
+            hint={t("mgr_list_filter_hint")}
+            summary={expensesCountLabel}
+            className="h-full"
+          />
+          <ManagerExpenseCategoryFilter value={categoryId} onChange={setCategoryId} className="h-full" />
+        </div>
+        {loading ? (
+          <div className="rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm">
+            <Skeleton className="h-5 w-48" />
+          </div>
+        ) : filteredExpenses.length > 0 ? (
           <div className="rounded-xl border border-border/60 bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
             <span className="font-medium text-foreground">{t("mgr_hist_section_depenses")}:</span>{" "}
             <span className="tabular-nums font-semibold text-foreground">{formatFcfa(totalDepenses)}</span>
           </div>
-        )}
+        ) : null}
       </div>
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -77,7 +99,9 @@ export default function ManagerDepensesListePage() {
           </div>
         </div>
         <div className="p-4 sm:p-5">
-          {filteredExpenses.length === 0 ? (
+          {loading ? (
+            <ExpenseCardListSkeleton count={4} />
+          ) : filteredExpenses.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-14 text-center text-sm text-muted-foreground">
               {t("mgr_empty_expenses")}
             </div>
@@ -96,10 +120,6 @@ export default function ManagerDepensesListePage() {
                     <div>
                       <dt className="inline">{t("acc_table_date")}: </dt>
                       <dd className="inline text-foreground">{formatDay(e.spentAt)}</dd>
-                    </div>
-                    <div>
-                      <dt className="inline">{t("acc_table_method")}: </dt>
-                      <dd className="inline text-foreground">{payLabelExpense(e.paymentMethod, t)}</dd>
                     </div>
                     {e.comment ? <div className="pt-1 text-foreground/90">{e.comment}</div> : null}
                     {e.attachmentDataUrl ? (

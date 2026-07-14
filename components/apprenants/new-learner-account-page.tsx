@@ -33,6 +33,7 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
   const [fullName, setFullName] = useState("")
   const [phone, setPhone] = useState("")
   const [dob, setDob] = useState("")
+  const [placeOfBirth, setPlaceOfBirth] = useState("")
   const [email, setEmail] = useState("")
   const [address, setAddress] = useState("")
   const [classId, setClassId] = useState("")
@@ -72,18 +73,17 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
     const list: string[] = []
     if (!fullName.trim()) list.push(t("lrn_new_err_name"))
     if (fullName.trim() && fullName.trim().length < 3) list.push(t("lrn_new_err_name_short"))
-    if (!isApiDataProvider()) {
-      if (!dob) list.push(t("lrn_new_err_dob"))
-      if (dob) {
-        const dobDate = new Date(dob)
-        const now = new Date()
-        if (dobDate > now) list.push(t("lrn_new_err_dob_future"))
-      }
+    if (!dob) list.push(t("lrn_new_err_dob"))
+    if (dob) {
+      const dobDate = new Date(dob)
+      const now = new Date()
+      if (dobDate > now) list.push(t("lrn_new_err_dob_future"))
     }
+    if (!placeOfBirth.trim()) list.push(t("lrn_new_err_pob"))
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) list.push(t("lrn_new_err_email"))
     if (!classId) list.push(t("lrn_new_err_class"))
     return list
-  }, [fullName, phone, dob, email, classId, t])
+  }, [fullName, phone, dob, placeOfBirth, email, classId, t])
 
   async function handleSubmit() {
     if (submitLockRef.current) return
@@ -113,6 +113,8 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
           phone: parsedPhone.e164,
           email: email.trim() || undefined,
           classId,
+          dateOfBirth: dob,
+          placeOfBirth: placeOfBirth.trim(),
         }),
       {
         loading: t("lrn_new_submitting"),
@@ -173,17 +175,24 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
               onBlur={() => setPhoneTouched(true)}
             />
           </div>
-          {!isApiDataProvider() ? (
-            <label className="text-sm">
-              {t("lrn_new_dob")}
-              <input
-                type="date"
-                value={dob}
-                onChange={(e) => setDob(e.target.value)}
-                className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
-              />
-            </label>
-          ) : null}
+          <label className="text-sm">
+            {t("lrn_new_dob")}
+            <input
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+              className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
+            />
+          </label>
+          <label className="text-sm">
+            {t("lrn_new_pob")}
+            <input
+              value={placeOfBirth}
+              onChange={(e) => setPlaceOfBirth(e.target.value)}
+              className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
+              placeholder={t("lrn_new_ph_pob")}
+            />
+          </label>
           <label className="text-sm">
             {t("lrn_new_email_optional")}
             <input

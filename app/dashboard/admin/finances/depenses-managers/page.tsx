@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { PiggyBank, Receipt, TrendingDown, Wallet } from "lucide-react"
-import { AdminKpiCard } from "@/components/admin/admin-kpi-card"
+import { FinanceFilterCard, FinanceStatCard } from "@/components/finances/finance-premium-ui"
 import { formatFcfa } from "@/services/admin-mock.service"
 import { useFinanceContext } from "../finance-context"
 import { useLocale } from "@/hooks/use-locale"
 import { isIsoDateInPeriod, computePeriodRange } from "@/lib/manager-period-range"
-import type { ManagerExpenseRecord, ManagerPaymentMethod } from "@/domains/manager-wallet/types"
+import type { ManagerExpenseRecord } from "@/domains/manager-wallet/types"
 import {
   Table,
   TableBody,
@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { CardListSkeleton, FinanceStatCardsSkeleton, TableRowsSkeleton } from "@/components/loading/data-skeletons"
 
 function formatDay(iso: string) {
   return new Date(iso).toLocaleDateString("fr-FR", {
@@ -25,20 +26,15 @@ function formatDay(iso: string) {
   })
 }
 
-function methodLabel(m: ManagerPaymentMethod, t: (k: import("@/services/i18n").TranslationKey) => string) {
-  if (m === "cash") return t("mgr_method_cash")
-  if (m === "mtn_momo") return t("mgr_method_mtn")
-  if (m === "orange_money") return t("mgr_method_om")
-  return t("mgr_method_bank")
-}
-
 export default function AdminManagerExpensesPage() {
   const { t } = useLocale()
   const {
     managers,
+    managersLoading,
     managerWalletSnapshots,
     getManagerExpenses,
     getManagerSummary,
+    allManagerExpenses,
     periodFilter,
     periodFilterApplied,
   } = useFinanceContext()
@@ -70,64 +66,95 @@ export default function AdminManagerExpensesPage() {
     void tick
     const source =
       managerFilter === "all"
-        ? managers.flatMap((m) => getManagerExpenses(m.id).map((e) => ({ ...e, managerId: m.id })))
+        ? allManagerExpenses.map((e) => ({
+            ...e,
+            managerId: e.managerId ?? "unknown",
+          }))
         : getManagerExpenses(managerFilter).map((e) => ({ ...e, managerId: managerFilter }))
     return source
       .filter((e) => (periodFilterApplied ? isIsoDateInPeriod(e.spentAt, periodRange) : true))
       .sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
-  }, [managerFilter, managers, getManagerExpenses, periodFilterApplied, periodRange, tick])
+  }, [
+    managerFilter,
+    allManagerExpenses,
+    getManagerExpenses,
+    periodFilterApplied,
+    periodRange,
+    tick,
+  ])
 
   const managerName = (id: string) => managers.find((m) => m.id === id)?.fullName ?? id
 
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
-        <div className="bg-gradient-to-r from-violet-700 via-fuchsia-700 to-rose-700 px-4 py-4 text-white sm:px-5">
-          <p className="text-base font-semibold">{t("fin_mgr_exp_title")}</p>
-          <p className="mt-1 max-w-2xl text-sm text-white/85">{t("fin_mgr_exp_sub")}</p>
-        </div>
-        <div className="border-b bg-muted/20 p-4 sm:p-5">
-          <label className="space-y-1.5">
-            <span className="text-xs font-medium text-muted-foreground">{t("fin_mgr_exp_filter_manager")}</span>
-            <select
-              value={managerFilter}
-              onChange={(e) => setManagerFilter(e.target.value)}
-              className="h-10 w-full max-w-md rounded-xl border border-input bg-background px-3 text-sm shadow-sm"
-            >
-              <option value="all">{t("fin_mgr_exp_all_managers")}</option>
-              {managers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.fullName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
+      <FinanceFilterCard accent="fuchsia">
+        <label className="space-y-1.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("fin_mgr_exp_filter_manager")}
+          </span>
+          <select
+            value={managerFilter}
+            onChange={(e) => setManagerFilter(e.target.value)}
+            disabled={managersLoading}
+            className="h-11 w-full max-w-md rounded-xl border border-input bg-background/80 px-3 text-sm shadow-sm backdrop-blur-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <option value="all">{t("fin_mgr_exp_all_managers")}</option>
+            {managers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.fullName}
+              </option>
+            ))}
+          </select>
+          {!managersLoading && managers.length === 0 ? (
+            <p className="text-xs text-amber-700 dark:text-amber-300">{t("fin_mgr_exp_no_managers")}</p>
+          ) : null}
+        </label>
+      </FinanceFilterCard>
 
+      {managersLoading ? (
+        <FinanceStatCardsSkeleton count={3} />
+      ) : (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <AdminKpiCard
+        <FinanceStatCard
+          featured
+          accent="violet"
           label={t("fin_mgr_exp_kpi_allocated")}
           value={formatFcfa(selectedSnapshot.allocated)}
           hint={t("fin_mgr_exp_kpi_allocated_hint")}
-          icon={<Wallet className="size-4 text-violet-600" />}
+          icon={<Wallet className="size-4" />}
         />
-        <AdminKpiCard
+        <FinanceStatCard
+          featured
+          accent="fuchsia"
           label={t("fin_mgr_exp_kpi_spent")}
           value={formatFcfa(selectedSnapshot.spent)}
           hint={t("fin_mgr_exp_kpi_spent_hint")}
-          icon={<TrendingDown className="size-4 text-rose-600" />}
+          icon={<TrendingDown className="size-4" />}
+          progress={
+            selectedSnapshot.allocated > 0
+              ? Math.round((selectedSnapshot.spent / selectedSnapshot.allocated) * 100)
+              : 0
+          }
         />
-        <AdminKpiCard
+        <FinanceStatCard
+          featured
+          accent="sky"
           label={t("fin_mgr_exp_kpi_remaining")}
           value={formatFcfa(selectedSnapshot.remaining)}
           hint={t("fin_mgr_exp_kpi_remaining_hint")}
-          icon={<PiggyBank className="size-4 text-emerald-600" />}
+          icon={<PiggyBank className="size-4" />}
+          valueClassName="text-emerald-700 dark:text-emerald-400"
+          progress={
+            selectedSnapshot.allocated > 0
+              ? Math.round((selectedSnapshot.remaining / selectedSnapshot.allocated) * 100)
+              : 100
+          }
         />
       </div>
+      )}
 
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
-        <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-3">
+      <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-[0_20px_40px_-28px_rgba(15,23,42,0.35)] ring-1 ring-black/[0.03] dark:ring-white/[0.06]">
+        <div className="flex items-center gap-2 border-b border-fuchsia-500/20 bg-gradient-to-r from-fuchsia-500/10 via-card to-card px-4 py-3.5">
           <Receipt className="size-4 text-primary" />
           <div>
             <p className="text-sm font-semibold">{t("fin_mgr_exp_history")}</p>
@@ -146,12 +173,14 @@ export default function AdminManagerExpensesPage() {
                 {managerFilter === "all" ? <TableHead>{t("fin_mgr_exp_th_manager")}</TableHead> : null}
                 <TableHead>{t("fin_mgr_exp_th_category")}</TableHead>
                 <TableHead className="text-right">{t("fin_mgr_exp_th_amount")}</TableHead>
-                <TableHead>{t("fin_mgr_exp_th_method")}</TableHead>
+                <TableHead>{t("acc_claim_proof")}</TableHead>
                 <TableHead>{t("fin_mgr_exp_th_comment")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {expenses.length === 0 ? (
+              {managersLoading ? (
+                <TableRowsSkeleton rows={5} cols={managerFilter === "all" ? 6 : 5} />
+              ) : expenses.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={managerFilter === "all" ? 6 : 5} className="h-24 text-center text-muted-foreground">
                     {t("fin_mgr_exp_empty")}
@@ -164,7 +193,7 @@ export default function AdminManagerExpensesPage() {
                     expense={e}
                     showManager={managerFilter === "all"}
                     managerName={managerName(e.managerId)}
-                    method={methodLabel(e.paymentMethod, t)}
+                    proofLabel={t("acc_claim_proof")}
                   />
                 ))
               )}
@@ -173,7 +202,9 @@ export default function AdminManagerExpensesPage() {
         </div>
 
         <div className="space-y-3 p-4 md:hidden">
-          {expenses.length === 0 ? (
+          {managersLoading ? (
+            <CardListSkeleton count={3} height="h-28" />
+          ) : expenses.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">{t("fin_mgr_exp_empty")}</p>
           ) : (
             expenses.map((e) => (
@@ -187,9 +218,17 @@ export default function AdminManagerExpensesPage() {
                   </div>
                   <p className="font-semibold tabular-nums">{formatFcfa(e.amount)}</p>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {formatDay(e.spentAt)} · {methodLabel(e.paymentMethod, t)}
-                </p>
+                <p className="mt-2 text-xs text-muted-foreground">{formatDay(e.spentAt)}</p>
+                {e.attachmentDataUrl ? (
+                  <a
+                    href={e.attachmentDataUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-xs text-primary underline underline-offset-2"
+                  >
+                    {e.attachmentName ?? t("acc_claim_proof")}
+                  </a>
+                ) : null}
                 {e.comment ? <p className="mt-1 text-xs">{e.comment}</p> : null}
               </div>
             ))
@@ -204,12 +243,12 @@ function ExpenseRow({
   expense,
   showManager,
   managerName,
-  method,
+  proofLabel,
 }: {
   expense: ManagerExpenseRecord & { managerId: string }
   showManager: boolean
   managerName: string
-  method: string
+  proofLabel: string
 }) {
   return (
     <TableRow>
@@ -217,7 +256,20 @@ function ExpenseRow({
       {showManager ? <TableCell>{managerName}</TableCell> : null}
       <TableCell className="font-medium">{expense.categoryLabel}</TableCell>
       <TableCell className="text-right tabular-nums font-semibold">{formatFcfa(expense.amount)}</TableCell>
-      <TableCell className="text-sm">{method}</TableCell>
+      <TableCell className="text-sm">
+        {expense.attachmentDataUrl ? (
+          <a
+            href={expense.attachmentDataUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            {expense.attachmentName ?? proofLabel}
+          </a>
+        ) : (
+          "—"
+        )}
+      </TableCell>
       <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">{expense.comment ?? "—"}</TableCell>
     </TableRow>
   )

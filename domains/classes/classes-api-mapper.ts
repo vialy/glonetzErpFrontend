@@ -1,9 +1,11 @@
 import { deriveClassSession } from "@/lib/class-session"
+import { isClassLevel, isClassTimeSlot, inferClassLevelFromName, type ClassLevel, type ClassTimeSlot } from "@/lib/class-metadata"
 import type {
   CreateStaffClassInput,
   StaffClass,
   StaffClassDetails,
   StaffClassStatus,
+  UpdateStaffClassInput,
 } from "@/domains/classes/types"
 
 function defaultChart(base: number) {
@@ -13,10 +15,27 @@ function defaultChart(base: number) {
   }))
 }
 
-function mapStatus(value: unknown): StaffClassStatus {
-  const normalized = String(value ?? "active").toLowerCase()
+function mapLevel(value: unknown, title?: string): ClassLevel {
+  const raw = String(value ?? "").toUpperCase()
+  if (isClassLevel(raw)) return raw
+  if (title) {
+    const inferred = inferClassLevelFromName(title)
+    if (inferred) return inferred
+  }
+  return "A1"
+}
+
+function mapTimeSlot(value: unknown): ClassTimeSlot {
+  const raw = String(value ?? "MO").toUpperCase()
+  return isClassTimeSlot(raw) ? raw : "MO"
+}
+
+function mapStatus(value: unknown, isActive?: unknown): StaffClassStatus {
+  const normalized = String(value ?? "").toLowerCase()
   if (normalized === "finished" || normalized === "completed" || normalized === "done") return "finished"
   if (normalized === "archived" || normalized === "inactive") return "archived"
+  if (normalized === "active") return "active"
+  if (isActive === false) return "archived"
   return "active"
 }
 
@@ -90,19 +109,22 @@ export function mapApiClassToStaffClass(
   const record = pickClassRecord(data)
   const periodStart = String(record.startDate ?? record.periodStart ?? record.start ?? "")
   const periodEnd = String(record.endDate ?? record.periodEnd ?? record.end ?? "")
+  const name = String(record.title ?? record.name ?? record.className ?? "")
   const tuitionAmount = Math.round(Number(record.fee ?? record.tuitionAmount ?? record.amount ?? 0))
   const baseChart = Math.max(15_000, Math.round(tuitionAmount * 0.25))
 
   return {
     id: String(record.classId ?? record.id ?? record.friendlyId ?? record._id ?? ""),
-    name: String(record.title ?? record.name ?? record.className ?? ""),
+    name,
     description: String(record.description ?? ""),
+    level: mapLevel(record.level, name),
+    timeSlot: mapTimeSlot(record.timeSlot),
     session:
       String(record.session ?? "").trim() ||
       deriveClassSession(periodStart, periodEnd, locale),
     periodStart,
     periodEnd,
-    status: mapStatus(record.status),
+    status: mapStatus(record.status, record.isActive),
     learnersCount: Number(
       record.learnersCount ??
         record.learnerCount ??
@@ -138,8 +160,10 @@ export function parseStaffClass(data: unknown, locale: "fr" | "en" = "fr"): Staf
 
 /**
  * Parse GET /staff/classes/:id/details — { class, stats }.
- * Le rollup financier (du/paye/reste) est calcule cote serveur, plafonne par
- * etudiant a `fee` et limite aux etudiants actuellement assignes a la classe.
+ *
+ * Le back-end renvoie stats.current (effectif actuel) et stats.session
+ * (historique ClassEnrollment + encaisse total). Les champs plats legacy
+ * sont conservés pour les clients existants.
  */
 export function parseStaffClassDetails(data: unknown, locale: "fr" | "en" = "fr"): StaffClassDetails {
   const cls = parseStaffClass(data, locale)
@@ -150,18 +174,69 @@ export function parseStaffClassDetails(data: unknown, locale: "fr" | "en" = "fr"
     const n = Number(value)
     return Number.isFinite(n) ? n : 0
   }
+
+  const parseCurrentBlock = (record: Record<string, unknown>) => ({
+    studentCount: num(record.studentCount ?? record.studentsCount ?? cls.learnersCount),
+    fullyPaidCount: num(record.fullyPaidCount),
+    partiallyPaidCount: num(record.partiallyPaidCount),
+    unpaidCount: num(record.unpaidCount),
+    catalogExpected: num(record.catalogExpected ?? record.totalExpected ?? record.expected ?? record.totalDue),
+    netExpected: num(record.netExpected ?? record.totalExpected ?? record.expected ?? record.totalDue),
+    totalScholarship: num(record.totalScholarship),
+    scholarshipCount: num(record.scholarshipCount),
+    scholarshipFullCount: num(record.scholarshipFullCount),
+    totalExpected: num(record.totalExpected ?? record.expected ?? record.totalDue),
+    totalPaid: num(record.totalPaid ?? record.paid),
+    totalRemaining: num(record.totalRemaining ?? record.remaining),
+  })
+
+  const parseSessionBlock = (record: Record<string, unknown>) => ({
+    enrollmentCount: num(record.enrollmentCount),
+    studentCount: num(record.studentCount ?? record.studentsCount),
+    leftCount: num(record.leftCount),
+    totalExpected: num(record.totalExpected ?? record.expected),
+    totalPaid: num(record.totalPaid ?? record.paid),
+    totalRemaining: num(record.totalRemaining ?? record.remaining),
+  })
+
+  const hasCurrent = statsRecord.current && typeof statsRecord.current === "object"
+  const hasSession = statsRecord.session && typeof statsRecord.session === "object"
+
+  const current = hasCurrent
+    ? parseCurrentBlock(statsRecord.current as Record<string, unknown>)
+    : parseCurrentBlock(statsRecord)
+
+  const session = hasSession
+    ? parseSessionBlock(statsRecord.session as Record<string, unknown>)
+    : {
+        enrollmentCount: current.studentCount,
+        studentCount: current.studentCount,
+        leftCount: 0,
+        totalExpected: current.totalExpected,
+        totalPaid: num(statsRecord.totalPaid ?? current.totalPaid),
+        totalRemaining: Math.max(
+          0,
+          current.totalExpected - num(statsRecord.totalPaid ?? current.totalPaid),
+        ),
+      }
+
+  const currencyCode =
+    typeof statsRecord.currencyCode === "string" ? statsRecord.currencyCode : undefined
+
   return {
     class: cls,
     stats: {
-      studentCount: num(statsRecord.studentCount ?? statsRecord.studentsCount ?? cls.learnersCount),
-      fullyPaidCount: num(statsRecord.fullyPaidCount),
-      partiallyPaidCount: num(statsRecord.partiallyPaidCount),
-      unpaidCount: num(statsRecord.unpaidCount),
-      totalExpected: num(statsRecord.totalExpected ?? statsRecord.expected ?? statsRecord.totalDue),
-      totalPaid: num(statsRecord.totalPaid ?? statsRecord.paid),
-      totalRemaining: num(statsRecord.totalRemaining ?? statsRecord.remaining),
-      currencyCode:
-        typeof statsRecord.currencyCode === "string" ? statsRecord.currencyCode : undefined,
+      currencyCode,
+      current,
+      session,
+      // Legacy (flat) — studentCount/totalExpected/totalRemaining = current ; totalPaid = session.
+      studentCount: current.studentCount,
+      fullyPaidCount: current.fullyPaidCount,
+      partiallyPaidCount: current.partiallyPaidCount,
+      unpaidCount: current.unpaidCount,
+      totalExpected: current.totalExpected,
+      totalPaid: session.totalPaid,
+      totalRemaining: current.totalRemaining,
     },
   }
 }
@@ -170,9 +245,23 @@ export function toCreateClassBody(input: CreateStaffClassInput) {
   return {
     title: input.name.trim(),
     description: input.description?.trim() || undefined,
+    level: input.level,
+    timeSlot: input.timeSlot,
     startDate: input.periodStart,
     endDate: input.periodEnd,
     fee: Math.round(input.tuitionAmount),
     currencyCode: "XAF",
   }
+}
+
+export function toUpdateClassBody(input: UpdateStaffClassInput) {
+  const body: Record<string, unknown> = {}
+  if (input.name !== undefined) body.title = input.name.trim()
+  if (input.description !== undefined) body.description = input.description.trim()
+  if (input.level !== undefined) body.level = input.level
+  if (input.timeSlot !== undefined) body.timeSlot = input.timeSlot
+  if (input.periodStart !== undefined) body.startDate = input.periodStart
+  if (input.periodEnd !== undefined) body.endDate = input.periodEnd
+  if (input.tuitionAmount !== undefined) body.fee = Math.round(input.tuitionAmount)
+  return body
 }

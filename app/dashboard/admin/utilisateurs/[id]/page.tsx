@@ -14,6 +14,7 @@ import {
   Shield,
   User,
 } from "lucide-react"
+import { DetailPageSkeleton } from "@/components/loading/data-skeletons"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -64,8 +65,8 @@ function roleLabel(role: StaffRole, t: Translate) {
       return t("adm_usr_role_manager")
     case "accountant":
       return t("adm_usr_role_accountant")
-    case "support":
-      return t("adm_usr_role_support")
+    case "collaborateur":
+      return t("adm_usr_role_collaborateur")
     default:
       return role
   }
@@ -142,10 +143,12 @@ export default function AdminUserFichePage() {
     if (!member) return
     setBusy(true)
     try {
-      await staffMembersService.regeneratePassword(member.id)
+      const result = await staffMembersService.regeneratePassword(member.id)
       setBanner({
-        type: "success",
-        text: t("adm_usr_regenerate_pwd_ok")
+        type: result.credentialsEmailSent ? "success" : "error",
+        text: (result.credentialsEmailSent
+          ? t("adm_usr_regenerate_pwd_ok")
+          : t("adm_usr_regenerate_pwd_email_failed"))
           .replace("{name}", member.fullName)
           .replace("{email}", member.email),
       })
@@ -177,12 +180,7 @@ export default function AdminUserFichePage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 px-4 py-16 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        {t("adm_usr_loading")}
-      </div>
-    )
+    return <DetailPageSkeleton />
   }
 
   if (!member) {

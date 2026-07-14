@@ -118,6 +118,27 @@ const MANAGER_STEPS: GuideStep[] = [
   },
 ]
 
+const COLLABORATEUR_STEPS: GuideStep[] = [
+  {
+    id: "collab_learners",
+    href: "/dashboard/collaborateur/apprenants",
+    titleKey: "guide_collab_learners_title",
+    descriptionKey: "guide_collab_learners_desc",
+  },
+  {
+    id: "collab_classes",
+    href: "/dashboard/collaborateur/classes",
+    titleKey: "guide_collab_classes_title",
+    descriptionKey: "guide_collab_classes_desc",
+  },
+  {
+    id: "collab_profile",
+    href: "/dashboard/collaborateur/profil",
+    titleKey: "guide_collab_profile_title",
+    descriptionKey: "guide_collab_profile_desc",
+  },
+]
+
 const ACCOUNTANT_STEPS: GuideStep[] = [
   {
     id: "acc_dashboard",
@@ -154,6 +175,7 @@ const ACCOUNTANT_STEPS: GuideStep[] = [
 export function getGuideStepsForRole(role: UserRole | null): GuideStep[] {
   if (role === "manager") return MANAGER_STEPS
   if (role === "accountant") return ACCOUNTANT_STEPS
+  if (role === "collaborateur") return COLLABORATEUR_STEPS
   return ADMIN_STEPS
 }
 

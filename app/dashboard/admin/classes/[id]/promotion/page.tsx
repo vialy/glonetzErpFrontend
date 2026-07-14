@@ -15,6 +15,7 @@ import {
   Sparkles,
   Users,
 } from "lucide-react"
+import { DetailPageSkeleton } from "@/components/loading/data-skeletons"
 import { classesService, type StaffClass } from "@/domains/classes"
 import { learnersService } from "@/domains/learners"
 import { isLearnerFullyPaid, resolveLearnerRemaining } from "@/domains/learners/learner-balance"
@@ -30,9 +31,10 @@ import { MobileBackButton } from "@/components/mobile-back-button"
 import { cn } from "@/lib/utils"
 import { useLocale } from "@/hooks/use-locale"
 import { isApiDataProvider } from "@/lib/data-provider"
+import { isSchoolPeriodFinished } from "@/lib/school-period"
 
 export default function ClassPromotionPage() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const params = useParams<{ id: string }>()
   const classId = params?.id ?? ""
   const { classes: adminClassesList, loading: classesLoading } = useAdminClassesQuery()
@@ -112,12 +114,7 @@ export default function ClassPromotionPage() {
   const { feedback, close, run } = useActionFeedback()
 
   if (loadingSource || (isApiDataProvider() && (classesLoading || learnersLoading))) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-10 text-sm text-muted-foreground md:px-6">
-        <Loader2 className="size-4 animate-spin" />
-        {t("adm_set_loading")}
-      </div>
-    )
+    return <DetailPageSkeleton />
   }
 
   if (!source) {
@@ -140,6 +137,11 @@ export default function ClassPromotionPage() {
     const matchesPayment = paymentFilter === "all" || (paymentFilter === "paid" ? isPaid : !isPaid)
     return matchesSearch && matchesPayment
   })
+
+  const sourcePeriodFinished = isSchoolPeriodFinished(source)
+  const sourcePeriodEndLabel = source.periodEnd
+    ? new Date(source.periodEnd).toLocaleDateString(locale === "en" ? "en-GB" : "fr-FR")
+    : "—"
 
   const unpaidIds = candidates
     .filter((learner) => !isLearnerFullyPaid(learner, adminClassesList))
@@ -171,6 +173,7 @@ export default function ClassPromotionPage() {
     if (outcome.ok) {
       setSubmitted(true)
       setSelectedIds((prev) => prev.filter((id) => !promotableIds.includes(id)))
+      window.dispatchEvent(new Event("admin-payments-updated"))
     }
   }
 
@@ -191,6 +194,15 @@ export default function ClassPromotionPage() {
           </Link>
         }
       />
+
+      {!sourcePeriodFinished ? (
+        <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-950 dark:text-amber-100">
+          <p className="font-semibold">{t("adm_class_promo_period_blocked_title")}</p>
+          <p className="mt-1 text-amber-900/90 dark:text-amber-100/90">
+            {t("adm_class_promo_period_blocked_body").replace("{date}", sourcePeriodEndLabel)}
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
@@ -380,7 +392,7 @@ export default function ClassPromotionPage() {
             <Button
               type="button"
               className="mt-5 rounded-xl px-8"
-              disabled={promotableCount === 0 || !destination || submitting}
+              disabled={promotableCount === 0 || !destination || submitting || !sourcePeriodFinished}
               onClick={() => void handlePromote()}
             >
               {submitting ? (
@@ -394,6 +406,9 @@ export default function ClassPromotionPage() {
               <p className="mt-3 text-xs text-destructive">{t("adm_class_promo_err_none")}</p>
             ) : null}
             {!destination ? <p className="mt-2 text-xs text-destructive">{t("adm_class_promo_err_dest")}</p> : null}
+            {!sourcePeriodFinished ? (
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{t("adm_class_promo_period_blocked_short")}</p>
+            ) : null}
             {submitted ? (
               <div className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
                 {t("adm_class_promo_done")

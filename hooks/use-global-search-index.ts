@@ -13,7 +13,6 @@ const REFRESH_EVENTS = [
   "admin-classes-updated",
   "admin-payments-updated",
   "admin-users-updated",
-  "manager-learners-updated",
 ] as const
 
 export function useGlobalSearchIndex(

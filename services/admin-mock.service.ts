@@ -1,5 +1,7 @@
 import type { ManagerRecordedPaymentMethod } from "@/domains/manager-learners/types"
 import { canonicalAdminUserPhone, parseAdminUserPhone } from "@/lib/admin-user-phone"
+import type { ClassLevel, ClassTimeSlot } from "@/lib/class-metadata"
+import { inferClassLevelFromName, normalizeStoredClassTimeSlot } from "@/lib/class-metadata"
 import { deriveClassSession } from "@/lib/class-session"
 
 export type AdminClassStatus = "active" | "finished" | "archived"
@@ -9,6 +11,8 @@ export interface AdminClass {
   name: string
   /** Presentation libre : objectifs, filiere, remarques admin. */
   description: string
+  level: ClassLevel
+  timeSlot: ClassTimeSlot
   session: string
   periodStart: string
   periodEnd: string
@@ -27,6 +31,7 @@ export interface AdminLearner {
   classId: string
   createdAt: string
   dateOfBirth: string
+  placeOfBirth: string
   pinInitialized: boolean
   mustChangePin: boolean
   status: "active" | "suspended"
@@ -99,6 +104,8 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
     id: "a1-jan-2025",
     name: "A1 - Jan 2025",
     description: "Niveau debutant — cohorte janvier 2025, formation generale.",
+    level: "A1",
+    timeSlot: "MO",
     session: "Jan 2025",
     periodStart: "2025-01-01",
     periodEnd: "2025-06-30",
@@ -113,6 +120,8 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
     id: "a2-apr-2025",
     name: "A2 - Apr 2025",
     description: "Niveau intermediaire — rentree avril 2025.",
+    level: "A2",
+    timeSlot: "NM",
     session: "Avr 2025",
     periodStart: "2025-04-01",
     periodEnd: "2025-09-30",
@@ -127,6 +136,8 @@ const DEFAULT_ADMIN_CLASSES: AdminClass[] = [
     id: "b1-sep-2024",
     name: "B1 - Sep 2024",
     description: "Cohorte terminee — session septembre 2024.",
+    level: "B1",
+    timeSlot: "AB",
     session: "Sep 2024",
     periodStart: "2024-09-01",
     periodEnd: "2025-03-31",
@@ -169,6 +180,8 @@ export function getAdminClasses(): AdminClass[] {
     return stored.map((c) => ({
       ...c,
       description: typeof c.description === "string" ? c.description : "",
+      level: c.level ?? inferClassLevelFromName(c.name) ?? "A1",
+      timeSlot: normalizeStoredClassTimeSlot(c.timeSlot),
       chartData: Array.isArray(c.chartData) && c.chartData.length > 0 ? c.chartData : chart(Math.max(10_000, Math.round(c.tuitionAmount * 0.2))),
     }))
   }
@@ -178,6 +191,8 @@ export function getAdminClasses(): AdminClass[] {
 export function addAdminClass(input: {
   name: string
   session?: string
+  level: ClassLevel
+  timeSlot: ClassTimeSlot
   periodStart: string
   periodEnd: string
   status?: AdminClassStatus
@@ -195,6 +210,8 @@ export function addAdminClass(input: {
     id,
     name: input.name.trim(),
     description: (input.description ?? "").trim(),
+    level: input.level,
+    timeSlot: input.timeSlot,
     session,
     periodStart: input.periodStart,
     periodEnd: input.periodEnd,
@@ -265,6 +282,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "a1-jan-2025",
     createdAt: "2025-01-10",
     dateOfBirth: "2000-01-01",
+    placeOfBirth: "Yaoundé",
     pinInitialized: true,
     mustChangePin: false,
     status: "active",
@@ -278,6 +296,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "a1-jan-2025",
     createdAt: "2025-01-11",
     dateOfBirth: "1999-05-15",
+    placeOfBirth: "Douala",
     pinInitialized: true,
     mustChangePin: false,
     status: "active",
@@ -291,6 +310,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "a1-jan-2025",
     createdAt: "2025-01-12",
     dateOfBirth: "2001-03-20",
+    placeOfBirth: "Bafoussam",
     pinInitialized: true,
     mustChangePin: false,
     status: "active",
@@ -304,6 +324,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "a2-apr-2025",
     createdAt: "2025-04-05",
     dateOfBirth: "1998-11-11",
+    placeOfBirth: "Garoua",
     pinInitialized: true,
     mustChangePin: false,
     status: "active",
@@ -317,6 +338,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "a2-apr-2025",
     createdAt: "2025-04-06",
     dateOfBirth: "2000-07-07",
+    placeOfBirth: "Bamenda",
     pinInitialized: true,
     mustChangePin: false,
     status: "active",
@@ -330,6 +352,7 @@ const DEFAULT_ADMIN_LEARNERS: AdminLearner[] = [
     classId: "b1-sep-2024",
     createdAt: "2025-12-15",
     dateOfBirth: "1999-09-09",
+    placeOfBirth: "Ebolowa",
     pinInitialized: true,
     mustChangePin: false,
     status: "suspended",
@@ -367,7 +390,7 @@ function writeAdminLearners(next: AdminLearner[]) {
 
 export function getAdminLearners(): AdminLearner[] {
   const stored = readAdminLearnersFromStorage()
-  if (stored) return stored.map((l) => ({ ...l }))
+  if (stored) return stored.map((l) => ({ ...l, placeOfBirth: l.placeOfBirth ?? "" }))
   return DEFAULT_ADMIN_LEARNERS.map((l) => ({ ...l }))
 }
 
@@ -377,6 +400,7 @@ export function addAdminLearner(input: {
   classId: string
   email?: string
   dateOfBirth?: string
+  placeOfBirth?: string
 }): AdminLearner {
   const list = getAdminLearners()
   const cls = getClassById(input.classId)
@@ -388,6 +412,7 @@ export function addAdminLearner(input: {
     classId: input.classId,
     createdAt: new Date().toISOString(),
     dateOfBirth: input.dateOfBirth ?? "",
+    placeOfBirth: input.placeOfBirth?.trim() ?? "",
     pinInitialized: true,
     mustChangePin: true,
     status: "active",
@@ -400,7 +425,7 @@ export function addAdminLearner(input: {
 
 export function updateLearner(
   learnerId: string,
-  patch: Partial<Pick<AdminLearner, "fullName" | "phone" | "classId" | "dateOfBirth">>,
+  patch: Partial<Pick<AdminLearner, "fullName" | "phone" | "classId" | "dateOfBirth" | "placeOfBirth">>,
 ): AdminLearner {
   const list = getAdminLearners()
   const idx = list.findIndex((l) => l.id === learnerId)
@@ -425,6 +450,20 @@ export function setLearnerStatus(learnerId: string, status: AdminLearner["status
   nextList[idx] = next
   writeAdminLearners(nextList)
   return next
+}
+
+/** Supprime un apprenant mock sans paiement validé (success / manual). */
+export function deleteLearner(learnerId: string): void {
+  const payments = getAdminPayments().filter(
+    (p) => p.learnerId === learnerId && (p.status === "success" || p.status === "manual"),
+  )
+  if (payments.length > 0) throw new Error("USER_HAS_PAYMENTS")
+  const list = getAdminLearners()
+  const next = list.filter((l) => l.id !== learnerId)
+  if (next.length === list.length) throw new Error("LEARNER_NOT_FOUND")
+  writeAdminLearners(next)
+  const remainingPayments = getAdminPayments().filter((p) => p.learnerId !== learnerId)
+  writeAdminPayments(remainingPayments)
 }
 
 function syncPaymentsLearnerName(learnerId: string, fullName: string) {
@@ -472,6 +511,7 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
   {
     id: "p1",
     learnerId: "l1",
+    classId: "a1-jan-2025",
     operatorReference: "MTN-NINA-54000",
     learnerName: "Nina Talla",
     className: "A1 - Jan 2025",
@@ -483,6 +523,7 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
   {
     id: "p2",
     learnerId: "l1",
+    classId: "a1-jan-2025",
     operatorReference: "OM-NINA-108000",
     learnerName: "Nina Talla",
     className: "A1 - Jan 2025",
@@ -494,6 +535,7 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
   {
     id: "p2b",
     learnerId: "l2",
+    classId: "a1-jan-2025",
     operatorReference: "OM-PAUL-50000",
     learnerName: "Paul Etame",
     className: "A1 - Jan 2025",
@@ -505,6 +547,7 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
   {
     id: "p3",
     learnerId: "l3",
+    classId: "a1-jan-2025",
     learnerName: "Merveille Ngo",
     className: "A1 - Jan 2025",
     amount: 48_000,
@@ -515,6 +558,7 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
   {
     id: "p4",
     learnerId: "l5",
+    classId: "a2-apr-2025",
     operatorReference: "OM-BRICE-60060",
     learnerName: "Brice Kotto",
     className: "A2 - Apr 2025",
@@ -522,6 +566,30 @@ const DEFAULT_ADMIN_PAYMENTS: AdminPaymentItem[] = [
     method: "Orange",
     createdAt: "2026-03-27 09:05",
     status: "pending",
+  },
+  {
+    id: "p5",
+    learnerId: "l4",
+    classId: "a1-jan-2025",
+    operatorReference: "MTN-JOEL-62000",
+    learnerName: "Joel Mekongo",
+    className: "A1 - Jan 2025",
+    amount: 62_000,
+    method: "MTN",
+    createdAt: "2026-02-15 11:00",
+    status: "success",
+  },
+  {
+    id: "p6",
+    learnerId: "l4",
+    classId: "a2-apr-2025",
+    operatorReference: "OM-JOEL-38000",
+    learnerName: "Joel Mekongo",
+    className: "A2 - Apr 2025",
+    amount: 38_000,
+    method: "Orange",
+    createdAt: "2026-03-20 09:30",
+    status: "success",
   },
 ]
 
@@ -592,6 +660,7 @@ export function recordAdminDeskPayment(
   const payment: AdminPaymentItem = {
     id: `pay-${now.getTime()}`,
     learnerId,
+    classId: learner.classId,
     operatorReference,
     learnerName: learner.fullName,
     className,

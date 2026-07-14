@@ -4,14 +4,22 @@ import { useMemo, useState } from "react"
 import { Building2, HandCoins, PlusCircle, Wallet } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ApiTreasuryWallets } from "@/components/finances/api-treasury-wallets"
 import { useFinanceContext } from "../finance-context"
 import { useLocale } from "@/hooks/use-locale"
+import { isApiDataProvider } from "@/lib/data-provider"
 
 export default function WalletAccountsPage() {
+  return isApiDataProvider() ? <ApiTreasuryWallets /> : <MockTreasuryWallets />
+}
+
+/** Ancien flux mock (FinanceProvider en memoire). */
+function MockTreasuryWallets() {
   const { t, locale } = useLocale()
   const formatMoney = (value: number) =>
     `${new Intl.NumberFormat(locale === "en" ? "en-US" : "fr-FR").format(value)} FCFA`
-  const { wallets, operations, activeWalletId, setActiveWalletId, createWallet, addBusinessInflow, deleteWallet } = useFinanceContext()
+  const { wallets, operations, activeWalletId, setActiveWalletId, createWallet, addBusinessInflow, deleteWallet } =
+    useFinanceContext()
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteWalletId, setDeleteWalletId] = useState<string | null>(null)
   const [walletName, setWalletName] = useState("")
@@ -23,7 +31,7 @@ export default function WalletAccountsPage() {
   const walletToDelete = wallets.find((w) => w.id === deleteWalletId) ?? null
   const visibleOperations = useMemo(
     () => operations.filter((op) => (activeWallet ? op.walletId === activeWallet.id : true)).slice().reverse(),
-    [operations, activeWallet]
+    [operations, activeWallet],
   )
 
   return (
@@ -32,7 +40,11 @@ export default function WalletAccountsPage() {
         <div className="rounded-xl border bg-card p-3 sm:p-4 xl:col-span-2">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold">{t("fin_wallets_title")}</p>
-            <button onClick={() => setCreateOpen(true)} className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+            >
               <PlusCircle className="size-3.5" /> {t("fin_wallets_create")}
             </button>
           </div>
@@ -54,11 +66,11 @@ export default function WalletAccountsPage() {
                 }`}
               >
                 <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold leading-tight">{wallet.name}</p>
+                  <p className="text-sm font-semibold leading-tight">{wallet.name}</p>
                   {wallet.type === "tuition" ? <Wallet className="size-4 text-sky-600" /> : <Building2 className="size-4 text-indigo-600" />}
                 </div>
                 <p className="mt-2 text-xl font-bold">{formatMoney(wallet.currentBalance)}</p>
-                <p className="mt-1 text-xs sm:text-sm text-muted-foreground leading-snug">{wallet.description}</p>
+                <p className="mt-1 text-xs leading-snug text-muted-foreground sm:text-sm">{wallet.description}</p>
                 {wallet.type !== "tuition" ? (
                   <button
                     type="button"
@@ -77,7 +89,7 @@ export default function WalletAccountsPage() {
         </div>
         <div className="rounded-xl border bg-card p-3 sm:p-4">
           <p className="text-sm font-semibold">{t("fin_wallets_credit_title")}</p>
-          <p className="mt-1 text-xs text-muted-foreground leading-snug">
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">
             {t("fin_wallets_selected")} {activeWallet?.name ?? "-"}
           </p>
           <div className="mt-3 space-y-2">
@@ -95,6 +107,7 @@ export default function WalletAccountsPage() {
               className="min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm"
             />
             <button
+              type="button"
               onClick={() => {
                 const result = addBusinessInflow(activeWallet.id, label, Number(amount))
                 if (!result.ok) {
@@ -173,10 +186,11 @@ export default function WalletAccountsPage() {
             />
           </div>
           <DialogFooter>
-            <button onClick={() => setCreateOpen(false)} className="rounded-lg border px-3 py-1.5 text-sm">
+            <button type="button" onClick={() => setCreateOpen(false)} className="rounded-lg border px-3 py-1.5 text-sm">
               {t("fin_wallets_cancel")}
             </button>
             <button
+              type="button"
               onClick={() => {
                 const result = createWallet(walletName, walletDescription)
                 if (!result.ok) {
@@ -205,10 +219,11 @@ export default function WalletAccountsPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <button onClick={() => setDeleteWalletId(null)} className="rounded-lg border px-3 py-1.5 text-sm">
+            <button type="button" onClick={() => setDeleteWalletId(null)} className="rounded-lg border px-3 py-1.5 text-sm">
               {t("fin_wallets_cancel")}
             </button>
             <button
+              type="button"
               onClick={() => {
                 if (!walletToDelete) return
                 const result = deleteWallet(walletToDelete.id)

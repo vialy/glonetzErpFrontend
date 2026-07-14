@@ -18,8 +18,7 @@ import { claimsService, type ClaimRecord } from "@/domains/claims"
 import { paymentsService } from "@/domains/payments"
 import { isApiDataProvider } from "@/lib/data-provider"
 import { fetchStaffClaims, resolveStaffClaim } from "@/services/staff-claims.service"
-import { fetchStaffPayments } from "@/services/staff-payments.service"
-import type { AdminPaymentItem } from "@/services/admin-mock.service"
+import { fetchClaimablePaymentsForUser, type ClaimablePaymentOption } from "@/services/staff-payments.service"
 import { getApiErrorMessage } from "@/lib/api-error"
 import {
   Dialog,
@@ -67,8 +66,8 @@ export default function ReclamationsValidationPage() {
   const [page, setPage] = useState(1)
   const [dialog, setDialog] = useState<{ type: "approve" | "reject"; claim: ClaimRecord } | null>(null)
   const [rejectReason, setRejectReason] = useState("")
-  // Mode API : la resolution exige de lier la reclamation a un paiement existant.
-  const [paymentChoices, setPaymentChoices] = useState<AdminPaymentItem[]>([])
+  // Mode API : la resolution exige de lier la reclamation a un paiement reclamable (pending/failed).
+  const [paymentChoices, setPaymentChoices] = useState<ClaimablePaymentOption[]>([])
   const [selectedPaymentId, setSelectedPaymentId] = useState("")
   const [loadingPayments, setLoadingPayments] = useState(false)
 
@@ -80,7 +79,7 @@ export default function ReclamationsValidationPage() {
     if (isApiDataProvider() && claim.userId) {
       setLoadingPayments(true)
       try {
-        const items = await fetchStaffPayments({ userId: claim.userId })
+        const items = await fetchClaimablePaymentsForUser(claim.userId)
         setPaymentChoices(items)
         // Pre-selection du paiement en attente (cas le plus frequent d'une reclamation).
         const pending = items.find((p) => p.status === "pending")
@@ -409,7 +408,7 @@ export default function ReclamationsValidationPage() {
                 <p className="text-xs text-muted-foreground">Chargement des paiements de l&apos;apprenant...</p>
               ) : paymentChoices.length === 0 ? (
                 <p className="text-xs text-destructive">
-                  Aucun paiement trouve pour cet apprenant : impossible de resoudre la reclamation.
+                  Aucun paiement reclamable (en attente ou echoue) pour cet apprenant : impossible de resoudre la reclamation.
                 </p>
               ) : (
                 <Select value={selectedPaymentId} onValueChange={setSelectedPaymentId}>
@@ -420,17 +419,13 @@ export default function ReclamationsValidationPage() {
                     {paymentChoices.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {formatFcfa(p.amount)} ·{" "}
-                        {p.status === "pending" ? "En attente" : p.status === "success" ? "Valide" : "Manuel"} ·{" "}
+                        {p.status === "pending" ? "En attente" : "Echoue"} ·{" "}
                         {p.createdAt.slice(0, 10)} · {p.id}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               )}
-              <p className="text-[11px] text-muted-foreground">
-                Le back-end lie la reclamation a ce paiement et synchronise son statut
-                ({dialog?.type === "approve" ? "valide" : "echoue"}).
-              </p>
             </div>
           ) : null}
 

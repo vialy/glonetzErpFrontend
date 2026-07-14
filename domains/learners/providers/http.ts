@@ -240,7 +240,7 @@ export const httpLearnersProvider: LearnersProvider = {
   },
 
   async update(id: string, input: UpdateStaffLearnerInput) {
-    const { classId, ...profileInput } = input
+    const { classId, transferPayments, ...profileInput } = input
     const body = toUpdateLearnerBody(profileInput)
 
     if (Object.keys(body).length > 0) {
@@ -251,11 +251,11 @@ export const httpLearnersProvider: LearnersProvider = {
     }
 
     if (classId !== undefined) {
-      await apiRequest<void>("/staff/users/batch-assign-class", {
-        method: "POST",
+      await apiRequest<void>(`/staff/users/${encodeURIComponent(id)}/class`, {
+        method: "PATCH",
         body: {
-          userIds: [id],
           classId,
+          ...(transferPayments !== undefined ? { transferPayments } : {}),
         },
       })
     }
@@ -299,5 +299,12 @@ export const httpLearnersProvider: LearnersProvider = {
       method: "POST",
       body: {},
     })
+  },
+
+  async remove(id: string) {
+    await apiRequest<void>(`/staff/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+    notifyLearnersUpdated()
   },
 }

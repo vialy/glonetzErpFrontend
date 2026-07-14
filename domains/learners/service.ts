@@ -47,4 +47,8 @@ export const learnersService = {
   regeneratePassword(id: string): Promise<void> {
     return provider.regeneratePassword(id)
   },
+
+  remove(id: string): Promise<void> {
+    return provider.remove(id)
+  },
 }

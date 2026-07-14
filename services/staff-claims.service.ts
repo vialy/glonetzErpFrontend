@@ -33,6 +33,24 @@ function refUser(ref: ApiStaffClaim["userId"]): ApiUserRef | null {
   return ref
 }
 
+/**
+ * Reconstruit l'URL de la preuve sur l'API réellement utilisée.
+ * Le back-end génère proofUrl avec son APP_BASE_URL (souvent http://localhost:4000
+ * en dev) : on ré-ancre toujours le chemin du fichier sur NEXT_PUBLIC_API_BASE_URL
+ * pour que l'image se charge depuis le bon hôte (les uploads sont servis par l'API).
+ */
+function absoluteUrl(url?: string): string | undefined {
+  if (!url) return undefined
+  const base = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "")
+  if (!base) return url
+  try {
+    const parsed = new URL(url)
+    return `${base}${parsed.pathname}${parsed.search}`
+  } catch {
+    return `${base}${url.startsWith("/") ? "" : "/"}${url}`
+  }
+}
+
 /** Mappe le statut back-end (pending/successful/failed) vers le statut UI existant. */
 function mapStatus(status: string | undefined): ClaimStatus {
   switch ((status ?? "").toLowerCase()) {
@@ -47,6 +65,7 @@ function mapStatus(status: string | undefined): ClaimStatus {
 
 function mapApiClaim(raw: ApiStaffClaim): ClaimRecord {
   const user = refUser(raw.userId)
+  const proof = absoluteUrl(raw.proofUrl)
   return {
     id: raw.claimId ?? "",
     createdAt: raw.createdAt ?? raw.paymentDate ?? new Date().toISOString(),
@@ -56,12 +75,12 @@ function mapApiClaim(raw: ApiStaffClaim): ClaimRecord {
     phoneNumber: user?.phone ?? "",
     transactionReference: raw.resolvedPaymentId ?? "",
     description: raw.description ?? "",
-    screenshotDataUrl: raw.proofUrl || undefined,
-    screenshotName: raw.proofUrl ? "preuve" : undefined,
+    screenshotDataUrl: proof,
+    screenshotName: proof ? proof.split("/").pop() || "preuve" : undefined,
     status: mapStatus(raw.status),
     userId: user?.userId ?? raw.userFriendlyId,
     userName: user?.name,
-    proofUrl: raw.proofUrl || undefined,
+    proofUrl: proof,
   }
 }
 

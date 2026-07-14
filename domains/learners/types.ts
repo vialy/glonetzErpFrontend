@@ -9,6 +9,7 @@ export interface StaffLearner {
   className?: string
   createdAt: string
   dateOfBirth: string
+  placeOfBirth: string
   pinInitialized: boolean
   mustChangePin: boolean
   status: StaffLearnerStatus
@@ -21,6 +22,8 @@ export interface CreateStaffLearnerInput {
   phone: string
   email?: string
   classId: string
+  dateOfBirth?: string
+  placeOfBirth?: string
 }
 
 export interface UpdateStaffLearnerInput {
@@ -28,6 +31,10 @@ export interface UpdateStaffLearnerInput {
   phone?: string
   email?: string
   classId?: string
+  /** When correcting class via profile: move payments from the previous class. */
+  transferPayments?: boolean
+  dateOfBirth?: string
+  placeOfBirth?: string
 }
 
 export interface BulkCreateLearnerItem {
@@ -35,6 +42,8 @@ export interface BulkCreateLearnerItem {
   phone: string
   classId: string
   email?: string
+  dateOfBirth?: string
+  placeOfBirth?: string
 }
 
 export interface BulkCreateStaffLearnersInput {
@@ -87,4 +96,5 @@ export interface LearnersProvider {
   setActive(id: string, active: boolean): Promise<StaffLearner | null>
   batchAssignClass(input: BatchAssignClassInput): Promise<void>
   regeneratePassword(id: string): Promise<void>
+  remove(id: string): Promise<void>
 }

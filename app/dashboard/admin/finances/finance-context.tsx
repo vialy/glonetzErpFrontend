@@ -5,6 +5,15 @@ import { adminExpenses, getAdminUsers } from "@/services/admin-mock.service"
 import { useAdminClasses } from "@/hooks/use-admin-classes"
 import { useAdminUsers } from "@/hooks/use-admin-users"
 import { ManagerWalletService } from "@/domains/manager-wallet"
+import { staffMembersService } from "@/domains/staff"
+import { isApiDataProvider } from "@/lib/data-provider"
+import { useAuth } from "@/hooks/use-auth"
+import {
+  fetchAdminManagerSnapshots,
+  fetchExtraordinaryExpenses,
+  fetchStaffExpenses,
+} from "@/services/staff-expenses.service"
+import type { ManagerExpenseRecord } from "@/domains/manager-wallet/types"
 import {
   computePeriodRange,
   defaultManagerPeriodFilter,
@@ -56,6 +65,9 @@ type FinanceContextValue = {
   managerWalletSnapshots: ManagerWalletSnapshot[]
   getManagerExpenses: (managerId: string) => ReturnType<typeof ManagerWalletService.getExpenses>
   getManagerSummary: (managerId: string) => ReturnType<typeof ManagerWalletService.getSummary>
+  allManagerExpenses: ManagerExpenseRecord[]
+  extraordinaryExpenses: ManagerExpenseRecord[]
+  managersLoading: boolean
   activeWalletId: string
   setActiveWalletId: (id: string) => void
   periodFilter: ManagerPeriodFilterValue
@@ -88,6 +100,7 @@ export function useFinanceContext() {
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const adminUsersList = useAdminUsers()
+  const { status, isAuthenticated } = useAuth()
   const adminClassesList = useAdminClasses()
   const tuitionIn = useMemo(() => adminClassesList.reduce((sum, c) => sum + c.totalPaid, 0), [adminClassesList])
   const managerOutSeed = useMemo(() => adminExpenses.filter((e) => e.type === "manager").reduce((sum, e) => sum + e.amount, 0), [])
@@ -115,19 +128,102 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [activeWalletId, setActiveWalletId] = useState("w-tuition")
   const [periodFilter, setPeriodFilter] = useState<ManagerPeriodFilterValue>(defaultManagerPeriodFilter)
   const [managerWalletTick, setManagerWalletTick] = useState(0)
-  const managers = useMemo(
-    () =>
-      adminUsersList
-        .filter((u) => u.role === "manager" && u.status === "active")
-        .map((u) => ({ id: u.id, fullName: u.fullName })),
-    [adminUsersList],
-  )
+  const apiMode = isApiDataProvider()
+  const [apiExpenses, setApiExpenses] = useState<ManagerExpenseRecord[]>([])
+  const [apiExtraExpenses, setApiExtraExpenses] = useState<ManagerExpenseRecord[]>([])
+  const [apiSnapshots, setApiSnapshots] = useState<ManagerWalletSnapshot[]>([])
+  const [apiManagers, setApiManagers] = useState<{ id: string; fullName: string }[]>([])
+  const [managersLoading, setManagersLoading] = useState(apiMode)
+
+  const managers = useMemo(() => {
+    if (apiMode) return apiManagers
+    return adminUsersList
+      .filter((u) => u.role === "manager" && u.status === "active")
+      .map((u) => ({ id: u.id, fullName: u.fullName }))
+  }, [apiMode, apiManagers, adminUsersList])
 
   useEffect(() => {
     const onManagerWalletUpdated = () => setManagerWalletTick((prev) => prev + 1)
+    const onStaffUpdated = () => setManagerWalletTick((prev) => prev + 1)
     window.addEventListener("manager-wallet-updated", onManagerWalletUpdated)
-    return () => window.removeEventListener("manager-wallet-updated", onManagerWalletUpdated)
+    window.addEventListener("admin-staff-updated", onStaffUpdated)
+    return () => {
+      window.removeEventListener("manager-wallet-updated", onManagerWalletUpdated)
+      window.removeEventListener("admin-staff-updated", onStaffUpdated)
+    }
   }, [])
+
+  useEffect(() => {
+    if (!apiMode) {
+      setManagersLoading(false)
+      return
+    }
+    if (status === "loading" || !isAuthenticated) return
+
+    let cancelled = false
+    setManagersLoading(true)
+    void staffMembersService
+      .list({ role: "manager" })
+      .then((list) => {
+        if (cancelled) return
+        setApiManagers(
+          list
+            .filter((m) => m.status === "active")
+            .map((m) => ({ id: m.id, fullName: m.fullName })),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setApiManagers([])
+      })
+      .finally(() => {
+        if (!cancelled) setManagersLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [apiMode, status, isAuthenticated, managerWalletTick])
+
+  useEffect(() => {
+    if (!apiMode) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const extra = await fetchExtraordinaryExpenses()
+        if (!cancelled) setApiExtraExpenses(extra)
+      } catch {
+        if (!cancelled) setApiExtraExpenses([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [apiMode, managerWalletTick])
+
+  useEffect(() => {
+    if (!apiMode || managers.length === 0) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [expenses, snapshots] = await Promise.all([
+          fetchStaffExpenses({ scope: "manager" }),
+          fetchAdminManagerSnapshots(managers),
+        ])
+        if (!cancelled) {
+          setApiExpenses(expenses)
+          setApiSnapshots(snapshots)
+        }
+      } catch {
+        if (!cancelled) {
+          setApiExpenses([])
+          setApiSnapshots([])
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [apiMode, managers, managerWalletTick])
 
   const periodRange = useMemo(() => computePeriodRange(periodFilter), [periodFilter])
   const periodFilterApplied = periodFilter.preset !== "all" && periodRange !== null
@@ -151,8 +247,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     [operations, managerOutSeed]
   )
   const extraOut = useMemo(
-    () => extraOutSeed + operations.filter((o) => o.type === "extra_expense").reduce((sum, o) => sum + o.amount, 0),
-    [operations, extraOutSeed]
+    () => {
+      if (apiMode) return apiExtraExpenses.reduce((sum, e) => sum + e.amount, 0)
+      return extraOutSeed + operations.filter((o) => o.type === "extra_expense").reduce((sum, o) => sum + o.amount, 0)
+    },
+    [apiMode, apiExtraExpenses, operations, extraOutSeed]
   )
   const managerBudgetSummary = useMemo(() => ManagerWalletService.getGlobalSummary(), [managerWalletTick, managers])
   const filteredManagerAllocations = useMemo(() => {
@@ -160,24 +259,59 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return all.filter((a) => isIsoDateInPeriod(a.allocatedAt, periodRange))
   }, [managerWalletTick, periodRange, managers])
   const filteredManagerExpenses = useMemo(() => {
-    const all = ManagerWalletService.getAllExpenses()
+    const all = apiMode
+      ? apiExpenses
+      : ManagerWalletService.getAllExpenses()
     return all.filter((e) => isIsoDateInPeriod(e.spentAt, periodRange))
-  }, [managerWalletTick, periodRange])
+  }, [apiMode, apiExpenses, managerWalletTick, periodRange])
 
-  const managerWalletSnapshots = useMemo(
-    (): ManagerWalletSnapshot[] =>
-      managers.map((m) => {
-        const s = ManagerWalletService.getSummary(m.id)
+  const managerWalletSnapshots = useMemo((): ManagerWalletSnapshot[] => {
+    if (apiMode) return apiSnapshots
+    return managers.map((m) => {
+      const s = ManagerWalletService.getSummary(m.id)
+      return {
+        managerId: m.id,
+        fullName: m.fullName,
+        allocated: s.envelopeCeiling,
+        spent: s.totalSpent,
+        remaining: s.remaining,
+      }
+    })
+  }, [apiMode, apiSnapshots, managers, managerWalletTick])
+
+  const allManagerExpenses = useMemo((): ManagerExpenseRecord[] => {
+    if (apiMode) return apiExpenses
+    void managerWalletTick
+    return ManagerWalletService.getAllExpenses()
+  }, [apiMode, apiExpenses, managerWalletTick])
+
+  const getManagerExpenses = useMemo(() => {
+    if (!apiMode) {
+      return (managerId: string) => ManagerWalletService.getExpenses(managerId)
+    }
+    return (managerId: string) =>
+      apiExpenses.filter((e) => e.managerId === managerId).sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
+  }, [apiMode, apiExpenses])
+
+  const getManagerSummary = useMemo(() => {
+    if (!apiMode) {
+      return (managerId: string) => ManagerWalletService.getSummary(managerId)
+    }
+    return (managerId: string) => {
+      const snap = apiSnapshots.find((s) => s.managerId === managerId)
+      if (snap) {
         return {
-          managerId: m.id,
-          fullName: m.fullName,
-          allocated: s.envelopeCeiling,
-          spent: s.totalSpent,
-          remaining: s.remaining,
+          envelopeCeiling: snap.allocated,
+          totalSpent: snap.spent,
+          remaining: snap.remaining,
+          currencyCode: "XAF",
         }
-      }),
-    [managers, managerWalletTick],
-  )
+      }
+      const expenses = apiExpenses.filter((e) => e.managerId === managerId)
+      const spent = expenses.reduce((sum, e) => sum + e.amount, 0)
+      return { envelopeCeiling: spent, totalSpent: spent, remaining: 0, currencyCode: "XAF" }
+    }
+  }, [apiMode, apiSnapshots, apiExpenses])
 
   const managerAppBalances = useMemo(() => {
     const out: Record<string, number> = {}
@@ -199,8 +333,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     [filteredOperations]
   )
   const periodExtraOut = useMemo(
-    () => filteredOperations.filter((o) => o.type === "extra_expense").reduce((sum, o) => sum + o.amount, 0),
-    [filteredOperations]
+    () => {
+      if (apiMode) {
+        return apiExtraExpenses
+          .filter((e) => isIsoDateInPeriod(e.spentAt, periodRange))
+          .reduce((sum, e) => sum + e.amount, 0)
+      }
+      return filteredOperations.filter((o) => o.type === "extra_expense").reduce((sum, o) => sum + o.amount, 0)
+    },
+    [apiMode, apiExtraExpenses, filteredOperations, periodRange]
   )
   const periodManagerRemaining = useMemo(
     () =>
@@ -392,8 +533,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         managers,
         managerAppBalances,
         managerWalletSnapshots,
-        getManagerExpenses: (managerId: string) => ManagerWalletService.getExpenses(managerId),
-        getManagerSummary: (managerId: string) => ManagerWalletService.getSummary(managerId),
+        getManagerExpenses,
+        getManagerSummary,
+        allManagerExpenses,
+        extraordinaryExpenses: apiMode ? apiExtraExpenses : [],
+        managersLoading,
         activeWalletId,
         setActiveWalletId,
         periodFilter,

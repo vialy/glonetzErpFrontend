@@ -5,7 +5,9 @@ import { httpStaffMembersProvider } from "@/domains/staff/providers/http"
 import { mockStaffMembersProvider } from "@/domains/staff/providers/mock"
 import type {
   CreateStaffMemberInput,
+  CreateStaffMemberResult,
   ListStaffMembersQuery,
+  RegenerateStaffPasswordResult,
   StaffMember,
   UpdateStaffMemberInput,
 } from "@/domains/staff/types"
@@ -21,7 +23,7 @@ export const staffMembersService = {
     return provider.get(id)
   },
 
-  create(input: CreateStaffMemberInput): Promise<StaffMember> {
+  create(input: CreateStaffMemberInput): Promise<CreateStaffMemberResult> {
     return provider.create(input)
   },
 
@@ -33,7 +35,7 @@ export const staffMembersService = {
     return provider.setActive(id, active)
   },
 
-  regeneratePassword(id: string): Promise<void> {
+  regeneratePassword(id: string): Promise<RegenerateStaffPasswordResult> {
     return provider.regeneratePassword(id)
   },
 }

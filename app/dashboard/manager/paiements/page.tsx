@@ -1,20 +1,22 @@
 "use client"
 
-import { PaymentsListPage } from "@/components/paiements/payments-list-page"
-import { useManagerPayments } from "@/hooks/use-manager-payments"
-import { useLocale } from "@/hooks/use-locale"
+import { useCallback, useState } from "react"
+import { ManagerPaymentsView } from "@/components/paiements/manager-payments-view"
+import { DataLoadError } from "@/components/data-load-error"
+import { useAdminPaymentsQuery } from "@/hooks/use-admin-payments"
 
 export default function ManagerPaiementsPage() {
-  const payments = useManagerPayments()
-  const { t } = useLocale()
-  return (
-    <PaymentsListPage
-      payments={payments}
-      pageTitle={t("mgr_payments_title")}
-      pageSubtitle={t("mgr_payments_subtitle")}
-      exportFilenamePrefix="paiements-manager"
-      receiptPreviewLine={t("pay_list_recv_preview_mgr")}
-      pdfIssuerFooter={t("pay_list_pdf_footer_mgr")}
-    />
-  )
+  const { payments, loading, error, refresh } = useAdminPaymentsQuery()
+  const [retrying, setRetrying] = useState(false)
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    await refresh()
+    setRetrying(false)
+  }, [refresh])
+
+  if (error && payments.length === 0) {
+    return <DataLoadError fullScreen onRetry={handleRetry} retrying={retrying} />
+  }
+
+  return <ManagerPaymentsView payments={payments} loading={loading} />
 }
