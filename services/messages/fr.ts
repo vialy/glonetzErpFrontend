@@ -3,9 +3,9 @@ import { appTranslationsFr } from "../i18n-app-fr"
 export const messages = {
     login_title: "Connexion",
     welcome_greeting: "Bienvenue",
-    welcome_subtitle: "Heureux de vous revoir sur votre espace Glonetz.",
+    welcome_subtitle: "Heureux de vous revoir sur votre espace Glonetz.....",
     welcome_fallback_name: "cher utilisateur",
-    staff_login_subtitle: "Espace personnel Glonetz (admin, manager, comptable).",
+    staff_login_subtitle: "Espace personnel Glonetz Staff.",
     staff_email_label: "Adresse e-mail",
     staff_email_placeholder: "nom@glonetz.cm",
     staff_email_invalid: "Adresse e-mail invalide.",
