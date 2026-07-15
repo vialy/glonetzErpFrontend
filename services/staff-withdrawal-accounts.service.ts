@@ -81,9 +81,13 @@ export async function verifyNeeroWithdrawalAccount(phoneNumber: string): Promise
     (root.neeroAccount as Record<string, unknown> | undefined) ??
     (nested.neeroAccount as Record<string, unknown> | undefined)
   if (!account || typeof account.id !== "string") throw new Error("INVALID_RESPONSE")
+  const shortInfo =
+    typeof account.shortInfo === "string" && account.shortInfo.trim()
+      ? account.shortInfo.trim()
+      : trimmed
   return {
     id: account.id,
-    shortInfo: typeof account.shortInfo === "string" ? account.shortInfo : account.id,
+    shortInfo,
     phoneNumber: typeof account.phoneNumber === "string" ? account.phoneNumber : trimmed,
     dev: root.dev === true || nested.dev === true,
   }
