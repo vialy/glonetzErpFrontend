@@ -11,7 +11,11 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { ApiClientError } from "@/core/api/client"
-import { STAFF_SESSION_EXPIRED_EVENT } from "@/core/api/unauthorized"
+import {
+  handleSessionUnauthorized,
+  isSessionUnauthorizedError,
+  STAFF_SESSION_EXPIRED_EVENT,
+} from "@/core/api/unauthorized"
 import { authService } from "@/domains/auth"
 import { clearAllCached } from "@/lib/client-cache"
 import { markWelcomePending } from "@/lib/welcome-session"
@@ -73,7 +77,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const refreshed = await authService.refreshSession()
         applySession(refreshed)
-      } catch {
+      } catch (err) {
+        if (
+          err instanceof ApiClientError &&
+          isSessionUnauthorizedError("/staff/auth/me", {
+            status: err.status,
+            errorCode: err.errorCode,
+            message: err.message,
+            hadToken: true,
+          })
+        ) {
+          handleSessionUnauthorized()
+          return
+        }
         authService.clearSession()
         applySession(null)
       }
@@ -85,6 +101,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshSession()
+  }, [refreshSession])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSession()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
   }, [refreshSession])
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { SidebarNav } from "@/components/sidebar-nav"
 import { TopBar } from "@/components/top-bar"
@@ -22,7 +22,8 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
-  const { status, isAuthenticated, mustChangePin, logout, role, phone, email, fullName } = useAuth()
+  const pathname = usePathname()
+  const { status, isAuthenticated, mustChangePin, logout, role, phone, email, fullName, refreshSession } = useAuth()
   const { t } = useLocale()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
@@ -35,6 +36,11 @@ export default function DashboardLayout({
       setShowWelcome(true)
     }
   }, [])
+
+  useEffect(() => {
+    if (status === "loading") return
+    void refreshSession()
+  }, [pathname, refreshSession, status])
 
   useEffect(() => {
     if (status === "loading") return

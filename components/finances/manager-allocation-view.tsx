@@ -230,7 +230,7 @@ function ApiManagerAllocation({ embedded }: { embedded: boolean }) {
               >
                 {withdrawalAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.provider.toUpperCase()} · {account.phoneNumber}
+                    {account.provider.toUpperCase()} · {account.displayLabel ?? account.phoneNumber}
                   </option>
                 ))}
               </select>

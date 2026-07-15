@@ -42,6 +42,7 @@ export function mapApiWithdrawalAccount(raw: unknown): WithdrawalAccountRecord |
     provider,
     phoneNumber,
     holderName: asString(row.holderName),
+    displayLabel: asString(row.displayLabel),
     isVerified: asBool(row.isVerified) ?? false,
     createdAt: asIsoDate(row.createdAt) ?? new Date().toISOString(),
   }

@@ -1,4 +1,5 @@
 import { clearAuthBrowserState } from "@/services/auth.service"
+import { ERROR_CODES } from "@/core/api/error-codes"
 
 export const STAFF_SESSION_EXPIRED_EVENT = "glonetz-staff-session-expired"
 
@@ -15,6 +16,23 @@ const PASSWORD_CHANGE_ERROR_KEYS = [
   "password_too_weak",
   "weak_password",
   "generic_error",
+]
+
+const SESSION_INVALID_ERROR_CODES: number[] = [
+  ERROR_CODES.UNAUTHORIZED,
+  ERROR_CODES.FORBIDDEN,
+  ERROR_CODES.INVALID_TOKEN,
+  ERROR_CODES.EXPIRED_TOKEN,
+  ERROR_CODES.ACCOUNT_DISABLED,
+]
+
+const SESSION_INVALID_MESSAGES = [
+  "unauthorized",
+  "unauthenticated",
+  "invalid_token",
+  "expired_token",
+  "missing_token",
+  "account_disabled",
 ]
 
 let handlingUnauthorized = false
@@ -45,9 +63,13 @@ export function isSessionUnauthorizedError(
     }
   }
 
+  if (options.errorCode === ERROR_CODES.PASSWORD_CHANGE_REQUIRED) return false
+
   if (options.status === 401 || options.status === 403) return true
-  if (options.errorCode === 1002 || options.errorCode === 401 || options.errorCode === 403) return true
-  if (message === "unauthorized" || message === "unauthenticated") return true
+  if (options.errorCode !== undefined && SESSION_INVALID_ERROR_CODES.includes(options.errorCode)) {
+    return true
+  }
+  if (SESSION_INVALID_MESSAGES.some((key) => message === key || message.includes(key))) return true
 
   return false
 }

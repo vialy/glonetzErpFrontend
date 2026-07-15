@@ -138,18 +138,20 @@ function OtpVerificationCard({
   )
 }
 
+function accountDisplayLabel(account: WithdrawalAccountRecord): string {
+  return account.displayLabel ?? account.holderName ?? account.phoneNumber
+}
+
 function AccountCard({
   account,
   locale,
   onUpdated,
   onReplaced,
-  apiMode,
 }: {
   account: WithdrawalAccountRecord
   locale: "fr" | "en"
   onUpdated: () => void
   onReplaced: (provider: WithdrawalProvider) => void
-  apiMode: boolean
 }) {
   const { t } = useLocale()
   const needsOtp = !account.isVerified && (account.provider === "mtn" || account.provider === "orange")
@@ -157,15 +159,6 @@ function AccountCard({
   const [replacing, setReplacing] = useState(false)
 
   async function handleReplace() {
-    if (apiMode) {
-      toast({
-        title: t("mgr_wda_replace_error"),
-        description: t("mgr_wda_replace_api_unavailable"),
-        variant: "destructive",
-      })
-      setReplaceOpen(false)
-      return
-    }
     setReplacing(true)
     try {
       const { deactivateWithdrawalAccount } = await import("@/services/staff-withdrawal-accounts.service")
@@ -204,7 +197,7 @@ function AccountCard({
             {account.holderName ? (
               <p className="mt-1 text-sm text-muted-foreground">{account.holderName}</p>
             ) : null}
-            <p className="mt-2 truncate font-mono text-xs text-muted-foreground">{account.id}</p>
+            <p className="mt-2 truncate text-sm text-muted-foreground">{accountDisplayLabel(account)}</p>
           </div>
           {account.isVerified ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
@@ -222,20 +215,18 @@ function AccountCard({
           {t("mgr_wda_registered_on")} {formatDay(account.createdAt, locale)}
         </p>
         {needsOtp ? <OtpVerificationCard account={account} onVerified={onUpdated} /> : null}
-        {!apiMode ? (
-          <div className="mt-auto pt-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={() => setReplaceOpen(true)}
-            >
-              <RefreshCw className="mr-2 size-3.5" />
-              {t("mgr_wda_replace")}
-            </Button>
-          </div>
-        ) : null}
+        <div className="mt-auto pt-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setReplaceOpen(true)}
+          >
+            <RefreshCw className="mr-2 size-3.5" />
+            {t("mgr_wda_replace")}
+          </Button>
+        </div>
       </div>
 
       <AlertDialog open={replaceOpen} onOpenChange={setReplaceOpen}>
@@ -424,7 +415,6 @@ export default function ManagerWithdrawalAccountsPage() {
                     <AccountCard
                       account={account}
                       locale={locale}
-                      apiMode={apiMode}
                       onUpdated={() => void refresh()}
                       onReplaced={handleAccountReplaced}
                     />

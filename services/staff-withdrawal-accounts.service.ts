@@ -170,10 +170,14 @@ export async function resendWithdrawalOtp(withdrawalAccountId: string): Promise<
 export async function deactivateWithdrawalAccount(withdrawalAccountId: string): Promise<void> {
   if (!isApiDataProvider()) {
     writeMockAccounts(readMockAccounts().filter((a) => a.id !== withdrawalAccountId))
+    notifyUpdated()
     return
   }
 
-  throw new Error("withdrawal_account_deactivate_unsupported")
+  await apiRequest(`/staff/withdrawal-accounts/${withdrawalAccountId}/deactivate`, {
+    method: "POST",
+  })
+  notifyUpdated()
 }
 
 /** Raccourci Neero — conservé pour compatibilité. */

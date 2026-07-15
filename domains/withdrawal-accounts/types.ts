@@ -5,6 +5,7 @@ export interface WithdrawalAccountRecord {
   provider: WithdrawalProvider
   phoneNumber: string
   holderName?: string
+  displayLabel?: string
   isVerified: boolean
   createdAt: string
 }
