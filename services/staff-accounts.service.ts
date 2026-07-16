@@ -189,6 +189,27 @@ export async function transferToStaff(input: TransferToStaffInput): Promise<void
   notifyAccountsUpdated()
 }
 
+export type TreasuryTransferInput = {
+  fromAccountId: string
+  toAccountId: string
+  amount: number
+  description: string
+}
+
+/** Virement apparié entre comptes société / virtuels (admin). */
+export async function transferBetweenTreasuryAccounts(input: TreasuryTransferInput): Promise<void> {
+  await apiRequest("/staff/accounts/treasury-transfer", {
+    method: "POST",
+    body: {
+      fromAccountId: input.fromAccountId,
+      toAccountId: input.toAccountId,
+      amount: Math.round(input.amount),
+      description: input.description.trim(),
+    },
+  })
+  notifyAccountsUpdated()
+}
+
 export type CreateVirtualAccountInput = {
   name: string
   description?: string

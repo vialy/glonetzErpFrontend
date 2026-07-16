@@ -900,7 +900,13 @@ export default function AdminApprenantFichePage() {
             </div>
             <div className="flex justify-between border-t pt-2">
               <span className="text-muted-foreground">Reste</span>
-              <span className="font-bold tabular-nums text-rose-700">{formatFcfa(reste)}</span>
+              <span
+                className={`font-bold tabular-nums ${
+                  reste <= 0.01 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"
+                }`}
+              >
+                {formatFcfa(reste <= 0.01 ? 0 : reste)}
+              </span>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
               <div

@@ -290,8 +290,16 @@ export default function AdminReportsPage() {
                       <TableCell className="text-right tabular-nums text-emerald-700">
                         {formatMoney(learner.paid)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-rose-700">
-                        {formatMoney(learner.remaining)}
+                      <TableCell className="text-right tabular-nums">
+                        <span
+                          className={
+                            learner.remaining <= 0.01
+                              ? "font-medium text-emerald-700 dark:text-emerald-400"
+                              : "font-semibold text-rose-700"
+                          }
+                        >
+                          {formatMoney(learner.remaining <= 0.01 ? 0 : learner.remaining)}
+                        </span>
                       </TableCell>
                     </TableRow>
                   ))}

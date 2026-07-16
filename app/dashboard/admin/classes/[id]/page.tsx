@@ -208,7 +208,13 @@ export default function AdminClassFichePage() {
             </div>
             <div className="bg-card px-5 py-4">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("adm_class_fiche_remain")}</p>
-              <p className="mt-1 text-lg font-bold tabular-nums text-rose-700">{formatMoney(financial.remaining)}</p>
+              <p
+                className={`mt-1 text-lg font-bold tabular-nums ${
+                  financial.remaining <= 0.01 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"
+                }`}
+              >
+                {formatMoney(financial.remaining <= 0.01 ? 0 : financial.remaining)}
+              </p>
             </div>
             <div className="bg-card px-5 py-4">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("adm_class_fiche_rate")}</p>
@@ -240,7 +246,13 @@ export default function AdminClassFichePage() {
           </div>
           <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("adm_class_fiche_remain")}</p>
-            <p className="mt-1 text-xl font-bold tabular-nums text-rose-700">{formatMoney(remainingMock)}</p>
+            <p
+              className={`mt-1 text-xl font-bold tabular-nums ${
+                remainingMock <= 0.01 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"
+              }`}
+            >
+              {formatMoney(remainingMock <= 0.01 ? 0 : remainingMock)}
+            </p>
           </div>
           <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("adm_class_fiche_rate")}</p>

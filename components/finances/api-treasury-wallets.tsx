@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Building2, HandCoins, Loader2, PlusCircle, Wallet } from "lucide-react"
+import { Building2, HandCoins, Loader2, PlusCircle, Wallet, ArrowRightLeft } from "lucide-react"
 import { CardListSkeleton, KpiCardsSkeleton, TableRowsSkeleton } from "@/components/loading/data-skeletons"
 import { toast } from "@/components/ui/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -16,6 +16,7 @@ import {
   fetchAccountStatementById,
   fetchTreasuryWallets,
   STAFF_ACCOUNTS_UPDATED_EVENT,
+  transferBetweenTreasuryAccounts,
   updateVirtualAccount,
   type StaffAccount,
   type StatementEntry,
@@ -35,7 +36,7 @@ function formatDate(iso: string, locale: "fr" | "en") {
 
 function entryTypeLabel(entry: StatementEntry, t: (k: TranslationKey) => string) {
   if (entry.source === "adjustment") return t("fin_wallets_type_adjustment")
-  if (entry.source === "transfer") return t("fin_wallets_type_mgr")
+  if (entry.source === "transfer") return t("fin_wallets_type_treasury_transfer")
   if (entry.source === "payment") return t("fin_wallets_type_payment")
   if (entry.source === "withdrawal") return t("fin_wallets_type_withdrawal")
   return entry.direction === "in" ? t("fin_wallets_type_inflow") : t("fin_wallets_type_extra")
@@ -57,6 +58,10 @@ export function ApiTreasuryWallets() {
   const [amount, setAmount] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [creditConfirmOpen, setCreditConfirmOpen] = useState(false)
+  const [transferToId, setTransferToId] = useState("")
+  const [transferLabel, setTransferLabel] = useState("")
+  const [transferAmount, setTransferAmount] = useState("")
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false)
 
   const loadWallets = useCallback(async () => {
     setLoadingWallets(true)
@@ -95,6 +100,23 @@ export function ApiTreasuryWallets() {
     () => wallets.find((w) => w.accountId === activeAccountId) ?? wallets[0],
     [wallets, activeAccountId],
   )
+
+  const transferTargets = useMemo(
+    () => wallets.filter((w) => w.accountId !== activeAccountId),
+    [wallets, activeAccountId],
+  )
+
+  const transferToWallet = useMemo(
+    () => wallets.find((w) => w.accountId === transferToId) ?? null,
+    [wallets, transferToId],
+  )
+
+  useEffect(() => {
+    setTransferToId((prev) => {
+      if (prev && transferTargets.some((w) => w.accountId === prev)) return prev
+      return transferTargets[0]?.accountId ?? ""
+    })
+  }, [transferTargets])
 
   useEffect(() => {
     void loadWallets()
@@ -149,6 +171,55 @@ export function ApiTreasuryWallets() {
       await loadHistory(activeWallet.accountId)
       setCreditConfirmOpen(false)
       toast({ title: t("fin_wallets_toast_inflow_ok"), description: t("fin_wallets_toast_inflow_desc") })
+    } catch (e) {
+      toast({
+        title: t("fin_wallets_toast_refused"),
+        description: getApiErrorMessage(e, t("fin_wallets_toast_refused")),
+        variant: "destructive",
+      })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function openTransferConfirm() {
+    if (!activeWallet || !transferToWallet) return
+    const description = transferLabel.trim()
+    const amountValue = Number(transferAmount)
+    if (!description) {
+      toast({ title: t("fin_wallets_toast_refused"), description: t("fin_wallets_err_label"), variant: "destructive" })
+      return
+    }
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      toast({ title: t("fin_wallets_toast_refused"), description: t("fin_wallets_err_amount"), variant: "destructive" })
+      return
+    }
+    if (activeWallet.accountId === transferToWallet.accountId) {
+      toast({ title: t("fin_wallets_toast_refused"), description: t("fin_wallets_err_same_account"), variant: "destructive" })
+      return
+    }
+    setTransferConfirmOpen(true)
+  }
+
+  async function handleTransfer() {
+    if (!activeWallet || !transferToWallet) return
+    const description = transferLabel.trim()
+    const amountValue = Number(transferAmount)
+    if (!description || !Number.isFinite(amountValue) || amountValue <= 0) return
+    setSubmitting(true)
+    try {
+      await transferBetweenTreasuryAccounts({
+        fromAccountId: activeWallet.accountId,
+        toAccountId: transferToWallet.accountId,
+        amount: amountValue,
+        description,
+      })
+      setTransferLabel("")
+      setTransferAmount("")
+      await loadWallets()
+      await loadHistory(activeAccountId)
+      setTransferConfirmOpen(false)
+      toast({ title: t("fin_wallets_toast_transfer_ok"), description: t("fin_wallets_toast_transfer_desc") })
     } catch (e) {
       toast({
         title: t("fin_wallets_toast_refused"),
@@ -337,6 +408,57 @@ export function ApiTreasuryWallets() {
               {t("fin_wallets_credit_btn")}
             </button>
           </div>
+
+          <div className="mt-4 border-t border-border/60 pt-4">
+            <div className="mb-1 h-[3px] w-12 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" />
+            <p className="text-sm font-bold">{t("fin_wallets_transfer_title")}</p>
+            <p className="mt-1 text-xs leading-snug text-muted-foreground">{t("fin_wallets_transfer_desc")}</p>
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs font-medium text-muted-foreground">{t("fin_wallets_transfer_from")}</label>
+              <p className="rounded-lg border bg-muted/20 px-3 py-2 text-sm font-medium">{activeWallet?.name ?? "-"}</p>
+              <label className="block text-xs font-medium text-muted-foreground">{t("fin_wallets_transfer_to")}</label>
+              <select
+                value={transferToId}
+                onChange={(e) => setTransferToId(e.target.value)}
+                disabled={!activeWallet || submitting || transferTargets.length === 0}
+                className="min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {transferTargets.length === 0 ? (
+                  <option value="">{t("fin_wallets_loading")}</option>
+                ) : (
+                  transferTargets.map((wallet) => (
+                    <option key={wallet.accountId} value={wallet.accountId}>
+                      {wallet.name} ({formatMoney(wallet.balance, locale)})
+                    </option>
+                  ))
+                )}
+              </select>
+              <input
+                value={transferLabel}
+                onChange={(e) => setTransferLabel(e.target.value)}
+                placeholder={t("fin_wallets_transfer_label")}
+                disabled={!activeWallet || submitting || transferTargets.length === 0}
+                className="min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-50"
+              />
+              <input
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                type="number"
+                placeholder={t("fin_wallets_amount_ph")}
+                disabled={!activeWallet || submitting || transferTargets.length === 0}
+                className="min-h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => openTransferConfirm()}
+                disabled={!activeWallet || !transferToWallet || submitting || transferTargets.length === 0}
+                className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-sm font-semibold text-indigo-800 dark:text-indigo-200 disabled:opacity-50"
+              >
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : <ArrowRightLeft className="size-4" />}
+                {t("fin_wallets_transfer_btn")}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -473,6 +595,36 @@ export function ApiTreasuryWallets() {
               className="rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               {submitting ? <Loader2 className="size-4 animate-spin" /> : t("fin_wallets_confirm_credit_btn")}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={transferConfirmOpen} onOpenChange={setTransferConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("fin_wallets_transfer_confirm_title")}</DialogTitle>
+            <DialogDescription>
+              {activeWallet && transferToWallet
+                ? t("fin_wallets_transfer_confirm_desc")
+                    .replace("{amount}", formatMoney(Number(transferAmount), locale))
+                    .replace("{from}", activeWallet.name)
+                    .replace("{to}", transferToWallet.name)
+                    .replace("{label}", transferLabel.trim())
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button type="button" onClick={() => setTransferConfirmOpen(false)} className="rounded-lg border px-3 py-1.5 text-sm">
+              {t("fin_wallets_cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void handleTransfer()}
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : t("fin_wallets_transfer_confirm_btn")}
             </button>
           </DialogFooter>
         </DialogContent>
