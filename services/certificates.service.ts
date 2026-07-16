@@ -340,4 +340,23 @@ export const CertificatesService = {
     const certificates = readCertificates()
     saveCertificates(certificates.filter((c) => c.id !== id))
   },
+
+  countGeneratedFormations(): number {
+    return readCertificates().filter(
+      (c) => c.certificateKind === "formation" && c.status === "disponible",
+    ).length
+  },
+
+  syncFormationSignatureSnapshots(): number {
+    const snapshot = SignatureService.get() ?? undefined
+    const certificates = readCertificates()
+    let updatedCount = 0
+    const next = certificates.map((c) => {
+      if (c.certificateKind !== "formation" || c.status !== "disponible") return c
+      updatedCount += 1
+      return { ...c, signatureSnapshotUrl: snapshot }
+    })
+    if (updatedCount > 0) saveCertificates(next)
+    return updatedCount
+  },
 }

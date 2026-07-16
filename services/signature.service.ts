@@ -63,4 +63,36 @@ export const SignatureService = {
     if (dataUrl) this.set(dataUrl)
     else this.remove()
   },
+
+  /** Nombre d'attestations de formation déjà générées (disponibles). */
+  async countGeneratedFormations(): Promise<number> {
+    if (!isApiDataProvider()) {
+      const { CertificatesService } = await import("@/services/certificates.service")
+      return CertificatesService.countGeneratedFormations()
+    }
+    try {
+      const data = await apiRequest<{ count?: number }>("/staff/certificates/signature/generated-count", {
+        method: "GET",
+      })
+      return typeof data?.count === "number" ? data.count : 0
+    } catch {
+      return 0
+    }
+  },
+
+  /**
+   * Recopie la signature globale sur les attestations de formation déjà générées.
+   * @returns nombre d'attestations mises à jour
+   */
+  async syncFormationSnapshots(): Promise<number> {
+    if (!isApiDataProvider()) {
+      const { CertificatesService } = await import("@/services/certificates.service")
+      return CertificatesService.syncFormationSignatureSnapshots()
+    }
+    const data = await apiRequest<{ updatedCount?: number }>(
+      "/staff/certificates/signature/sync-snapshots",
+      { method: "POST" },
+    )
+    return typeof data?.updatedCount === "number" ? data.updatedCount : 0
+  },
 }
