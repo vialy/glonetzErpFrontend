@@ -355,7 +355,7 @@ export async function fetchAccountStatement(
 }
 
 /**
- * Relevé d'un compte société ou virtuel via GET /staff/accounts/:accountId/statement (admin).
+ * Relevé d'un compte (société, virtuel ou staff) via GET /staff/accounts/:accountId/statement (admin).
  */
 export async function fetchAccountStatementById(
   accountId: string,
