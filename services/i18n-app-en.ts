@@ -74,7 +74,7 @@ export const appTranslationsEn = {
   fin_mgr_funds_tab_allocate: "Allocate",
   fin_mgr_funds_tab_history: "History",
   fin_mgr_funds_allocate_title: "New allocation",
-  fin_mgr_funds_allocate_sub_api: "Real payout to the manager's Neero or MoMo account (POST /staff/withdrawals).",
+  fin_mgr_funds_allocate_sub_api: "Real payout to the manager's Neero or MoMo account.",
   fin_mgr_funds_allocate_sub_mock: "Simulated allocation from a wallet.",
   fin_mgr_funds_history_title: "Manager transfers",
   fin_mgr_funds_history_sub_api: "Statement of movements from the company account.",

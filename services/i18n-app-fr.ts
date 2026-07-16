@@ -74,7 +74,7 @@ export const appTranslationsFr = {
   fin_mgr_funds_tab_allocate: "Affecter",
   fin_mgr_funds_tab_history: "Historique",
   fin_mgr_funds_allocate_title: "Nouvelle affectation",
-  fin_mgr_funds_allocate_sub_api: "Paiement reel vers le compte Neero ou MoMo du manager (POST /staff/withdrawals).",
+  fin_mgr_funds_allocate_sub_api: "Paiement reel vers le compte Neero ou MoMo du manager.",
   fin_mgr_funds_allocate_sub_mock: "Simulation d'affectation depuis un portefeuille.",
   fin_mgr_funds_history_title: "Transferts managers",
   fin_mgr_funds_history_sub_api: "Releve des mouvements issus du compte societe.",
