@@ -639,7 +639,7 @@ export const appTranslationsEn = {
   lrn_new_err_phone_dup: "This phone number already exists. Duplicates not allowed.",
   lrn_new_err_dob: "Date of birth is required.",
   lrn_new_err_pob: "Place of birth is required.",
-  lrn_new_err_dob_future: "Invalid date of birth (future).",
+  lrn_new_err_dob_future: "Date of birth must be earlier than today.",
   lrn_new_err_email: "Invalid email.",
   lrn_new_err_class: "Class is required.",
   lrn_new_ph_name: "e.g. John Doe",

@@ -422,6 +422,13 @@ export default function AdminApprenantFichePage() {
         if (!formName.trim()) throw new Error("Nom obligatoire")
         if (!formPhone.trim()) throw new Error("Telephone obligatoire")
         if (!formClassId) throw new Error("Classe obligatoire")
+        if (formDob) {
+          const today = new Date()
+          const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`
+          if (formDob.slice(0, 10) >= todayYmd) {
+            throw new Error(t("lrn_new_err_dob_future"))
+          }
+        }
 
         if (isApiDataProvider()) {
           const classChanged = formClassId !== learner.classId
@@ -1136,7 +1143,17 @@ export default function AdminApprenantFichePage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-dob">Date de naissance</Label>
-              <Input id="edit-dob" type="date" value={formDob} onChange={(e) => setFormDob(e.target.value)} />
+              <Input
+                id="edit-dob"
+                type="date"
+                value={formDob}
+                max={(() => {
+                  const d = new Date()
+                  d.setDate(d.getDate() - 1)
+                  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+                })()}
+                onChange={(e) => setFormDob(e.target.value)}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-pob">Lieu de naissance</Label>

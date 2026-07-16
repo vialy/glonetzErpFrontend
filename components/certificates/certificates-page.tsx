@@ -117,6 +117,7 @@ export function CertificatesPage({ mode }: { mode: PageMode }) {
   const [prefill, setPrefill] = useState<CertificatePrefill | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [generating, setGenerating] = useState(false)
+  const [bulkApproving, setBulkApproving] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [previewingId, setPreviewingId] = useState<string | null>(null)
   const [publishingId, setPublishingId] = useState<string | null>(null)
@@ -271,12 +272,66 @@ export function CertificatesPage({ mode }: { mode: PageMode }) {
     }
   }
 
+  const selectedCertificates = useMemo(
+    () => certificates.filter((c) => selected.includes(c.id) && isFormationCertificate(c)),
+    [certificates, selected],
+  )
+
+  const selectedApprovable = useMemo(
+    () =>
+      selectedCertificates.filter(
+        (c) =>
+          canApproveCertificate(actorRole) &&
+          c.status !== "disponible" &&
+          isTrainingFinishedForApproval(c, classesById),
+      ),
+    [actorRole, classesById, selectedCertificates],
+  )
+
+  const selectedDownloadable = useMemo(
+    () => selectedCertificates.filter((c) => canDownloadCertificate(c)),
+    [selectedCertificates],
+  )
+
+  async function handleApproveSelected() {
+    if (selectedApprovable.length === 0) {
+      toast({
+        title: "Aucun certificat approuvable",
+        description: "Sélectionnez des certificats en attente dont la formation est terminée.",
+        variant: "destructive",
+      })
+      return
+    }
+    setBulkApproving(true)
+    let ok = 0
+    let failed = 0
+    try {
+      for (const certificate of selectedApprovable) {
+        try {
+          await certificatesService.approve(certificate.id, staffUserId)
+          ok += 1
+        } catch {
+          failed += 1
+        }
+      }
+      toast({
+        title: `${ok} certificat(s) approuvé(s)`,
+        description: failed > 0 ? `${failed} échec(s)` : undefined,
+        variant: failed > 0 && ok === 0 ? "destructive" : "default",
+      })
+      setSelected((prev) => prev.filter((id) => !selectedApprovable.some((c) => c.id === id)))
+      await refresh()
+    } finally {
+      setBulkApproving(false)
+    }
+  }
+
   async function handleGenerateSelected() {
-    const items = certificates.filter((c) => selected.includes(c.id) && canDownloadCertificate(c))
+    const items = selectedDownloadable
     if (items.length === 0) {
       toast({
         title: "Aucun certificat téléchargeable",
-        description: "Seuls les certificats approuvés peuvent être générés.",
+        description: "Seuls les certificats approuvés (disponibles) peuvent être téléchargés.",
         variant: "destructive",
       })
       return
@@ -287,15 +342,15 @@ export function CertificatesPage({ mode }: { mode: PageMode }) {
       for (const certificate of items) {
         try {
           await downloadFormationCertificatePdf(certificate, undefined, (id) =>
-        certificatesService.getById(id),
-      )
+            certificatesService.getById(id),
+          )
           ok += 1
         } catch {
           /* continue */
         }
         await new Promise((r) => setTimeout(r, 400))
       }
-      toast({ title: `${ok}/${items.length} PDF généré(s)` })
+      toast({ title: `${ok}/${items.length} PDF téléchargé(s)` })
     } finally {
       setGenerating(false)
     }
@@ -488,16 +543,34 @@ export function CertificatesPage({ mode }: { mode: PageMode }) {
       ) : null}
 
       {selected.length > 0 ? (
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={handleGenerateSelected}
-            disabled={generating}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-            Télécharger {selected.length} PDF (approuvés)
-          </button>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+          <span className="text-xs text-muted-foreground">{selected.length} sélectionné(s)</span>
+          <div className="flex flex-wrap gap-2">
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={() => void handleApproveSelected()}
+                disabled={bulkApproving || selectedApprovable.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                {bulkApproving ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-3.5" />
+                )}
+                Approuver {selectedApprovable.length || selected.length}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void handleGenerateSelected()}
+              disabled={generating || selectedDownloadable.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+              Télécharger {selectedDownloadable.length || selected.length} PDF
+            </button>
+          </div>
         </div>
       ) : null}
 

@@ -639,7 +639,7 @@ export const appTranslationsFr = {
   lrn_new_err_phone_dup: "Ce numero de telephone existe deja. Doublon interdit.",
   lrn_new_err_dob: "Date de naissance obligatoire.",
   lrn_new_err_pob: "Lieu de naissance obligatoire.",
-  lrn_new_err_dob_future: "Date de naissance invalide (future).",
+  lrn_new_err_dob_future: "La date de naissance doit etre anterieure a aujourd'hui.",
   lrn_new_err_email: "Email invalide.",
   lrn_new_err_class: "Classe obligatoire.",
   lrn_new_ph_name: "Ex: Jean Dupont",

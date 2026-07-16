@@ -20,6 +20,19 @@ import {
 import { isApiDataProvider } from "@/lib/data-provider"
 import { getAdminLearners } from "@/services/admin-mock.service"
 
+function localYmd(d = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function maxAllowedDobYmd(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  return localYmd(d)
+}
+
 export type NewLearnerAccountPageProps = {
   backHref: string
   afterSubmitHref: string
@@ -74,11 +87,8 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
     if (!fullName.trim()) list.push(t("lrn_new_err_name"))
     if (fullName.trim() && fullName.trim().length < 3) list.push(t("lrn_new_err_name_short"))
     if (!dob) list.push(t("lrn_new_err_dob"))
-    if (dob) {
-      const dobDate = new Date(dob)
-      const now = new Date()
-      if (dobDate > now) list.push(t("lrn_new_err_dob_future"))
-    }
+    // Date de naissance strictement antérieure à aujourd'hui (aujourd'hui et futur refusés).
+    else if (dob.slice(0, 10) >= localYmd()) list.push(t("lrn_new_err_dob_future"))
     if (!placeOfBirth.trim()) list.push(t("lrn_new_err_pob"))
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) list.push(t("lrn_new_err_email"))
     if (!classId) list.push(t("lrn_new_err_class"))
@@ -180,6 +190,7 @@ export function NewLearnerAccountPage({ backHref, afterSubmitHref, importHref }:
             <input
               type="date"
               value={dob}
+              max={maxAllowedDobYmd()}
               onChange={(e) => setDob(e.target.value)}
               className="mt-1 w-full rounded-lg border bg-background px-3 py-2"
             />
